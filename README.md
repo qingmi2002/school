@@ -14,10 +14,18 @@ curl -fsSL https://raw.githubusercontent.com/qingmi2002/school/main/install.sh |
 
 ## 二、NAS（群晖 / 飞牛 OS / 极空间 / 绿联 / 1Panel / Portainer）一键部署
 
-1. 打开 [Actions → Build & Publish Production Images](https://github.com/qingmi2002/school/actions) 点击一次 **Run workflow** 生成 `:latest` 镜像（首次在 GitHub Packages 中将两个镜像设为 Public 即可免登录拉取）。
-2. 在 NAS 的 Docker Compose 界面新建项目，直接复制粘贴 [`docker-compose.nas.yml`](docker-compose.nas.yml) 全文，点击启动即可。
-3. 浏览器打开 `http://<NAS的IP>:8088` 直接使用；排课归档文件自动落入同级 `./cloud_archive` 目录。
+提供两份零修改直接粘贴的模板，按你的网络环境任选其一：
+- **国内宽带直连推荐（防断流）**：复制粘贴 [`docker-compose.nas.cn.yml`](docker-compose.nas.cn.yml)（内置南京大学 GHCR 与 DaoCloud 国内镜像加速源）
+- **海外 / 代理环境官方源**：复制粘贴 [`docker-compose.nas.yml`](docker-compose.nas.yml)（直连 `ghcr.io` 与 Docker Hub 官方源）
+
+启动后浏览器打开 `http://<NAS的IP>:8088` 直接使用；排课归档文件自动落入同级 `./cloud_archive` 目录。
 
 ---
+
+## 三、版本检测与手动确认升级
+
+页面右上角会自动检测 `qingmi2002/school` 最新 Release 并亮起提醒（绝不静默自动重启）。确认升级时：
+- **Linux 服务器**：执行 `cd /opt/smart-schedule && git pull && sudo bash deploy.sh --upgrade`（升级前自动热备 PostgreSQL 数据库）。
+- **NAS**：在 Docker 界面重新拉取 `:latest` 镜像并重启容器即可。
 
 详细内网离线部署、备份与运维手册请见 [docs/DEPLOY_AND_OPS.md](docs/DEPLOY_AND_OPS.md)。

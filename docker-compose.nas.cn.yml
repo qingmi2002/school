@@ -1,0 +1,91 @@
+# ==============================================================================
+# 高校分级智能排课系统（多级通用版）— NAS 国内镜像加速源一键部署模板
+# 适用场景：国内宽带直连 Docker Hub / GHCR 缓慢或 IPv6 断流（connection reset）
+# 适用平台：群晖 (Container Manager)、飞牛 OS (fnOS)、极空间、绿联、威联通、1Panel、Portainer
+#
+# 镜像加速说明：
+#   - PostgreSQL / Redis 使用 DaoCloud 国内镜像代理 (docker.m.daocloud.io)
+#   - 排课前后端镜像使用南京大学 GHCR 镜像代理 (ghcr.nju.edu.cn)
+#     （如 ghcr.nju.edu.cn 临时波动，可全局替换为 ghcr.m.daocloud.io）
+#
+# 使用方法：
+#   1. 在 NAS Docker Compose 新建项目，直接全文粘贴本文件，点击“启动”即可！
+#   2. 浏览器访问 http://NAS的IP:8088 即可使用；排课归档自动落入 ./cloud_archive 目录。
+# ==============================================================================
+
+services:
+  postgres:
+    image: docker.m.daocloud.io/library/postgres:15-alpine
+    container_name: smart_schedule_pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: smart_schedule
+      POSTGRES_USER: schedule_admin
+      POSTGRES_PASSWORD: SmartSchedule_ChangeMe_2026
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U schedule_admin -d smart_schedule"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  redis:
+    image: docker.m.daocloud.io/library/redis:7-alpine
+    container_name: smart_schedule_redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  backend:
+    image: ghcr.nju.edu.cn/qingmi2002/smart-schedule-backend:latest
+    container_name: smart_schedule_backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://schedule_admin:SmartSchedule_ChangeMe_2026@postgres:5432/smart_schedule
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      ARCHIVE_LOCAL_ROOT: /mnt/cloud_drive/SmartSchedule_Archive
+      ARCHIVE_STAGING_DIR: /app/archive_staging
+    volumes:
+      - ./data/archive_staging:/app/archive_staging
+      - ./cloud_archive:/mnt/cloud_drive/SmartSchedule_Archive
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-worker:
+    image: ghcr.nju.edu.cn/qingmi2002/smart-schedule-backend:latest
+    container_name: smart_schedule_worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://schedule_admin:SmartSchedule_ChangeMe_2026@postgres:5432/smart_schedule
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      ARCHIVE_LOCAL_ROOT: /mnt/cloud_drive/SmartSchedule_Archive
+      ARCHIVE_STAGING_DIR: /app/archive_staging
+    volumes:
+      - ./data/archive_staging:/app/archive_staging
+      - ./cloud_archive:/mnt/cloud_drive/SmartSchedule_Archive
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.core.celery_app:celery_app worker --loglevel=info --concurrency=2
+
+  web:
+    image: ghcr.nju.edu.cn/qingmi2002/smart-schedule-web:latest
+    container_name: smart_schedule_web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8088:80"
