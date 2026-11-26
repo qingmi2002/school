@@ -1,0 +1,472 @@
+"""
+T1.2 核心数据模型（16 张表）
+严格遵循“多级自由调整动态组织树（org_node + 5大正交开关 + org_resource_grant）”
+与“单院系独立 / 全校统筹双栖”设计。
+"""
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    Numeric,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.session import Base
+
+
+# =============================================================================
+# 域一：组织与权限域（5 张表）
+# 1. node_type  2. org_node  3. org_resource_grant  4. sys_user  5. excel_import_batch
+# =============================================================================
+
+
+class NodeType(Base):
+    """1. 组织节点类型字典表（零硬编码，支持自由扩展高校层级名称）"""
+
+    __tablename__ = "node_type"
+
+    code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(255))
+    default_flags: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    sort_order: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+
+
+class OrgNode(Base):
+    """2. 多架构任意深度动态组织树（替代旧版静态 department 表）"""
+
+    __tablename__ = "org_node"
+    __table_args__ = (
+        Index("ix_org_node_tree_path", "tree_path"),
+        Index("ix_org_node_parent_id", "parent_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    parent_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=True
+    )
+    node_code: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
+    node_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    node_type_code: Mapped[str] = mapped_column(
+        String(32), ForeignKey("node_type.code", ondelete="RESTRICT"), nullable=False
+    )
+    tree_path: Mapped[str] = mapped_column(String(512), nullable=False)  # 物化路径，如 /1/3/12/
+    depth: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
+
+    # 5 大正交能力开关 + 汇总/作息覆写开关
+    is_scheduling_unit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_public_provider: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    has_student_cohort: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    has_room_pool: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_campus_boundary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_summary_node: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allow_custom_timeslot: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    parent: Mapped[Optional["OrgNode"]] = relationship("OrgNode", remote_side=[id])
+
+
+class OrgResourceGrant(Base):
+    """3. 横向资源授权矩阵（支持书院制/实训中心/跨院系场地与师资自由借用）"""
+
+    __tablename__ = "org_resource_grant"
+    __table_args__ = (
+        UniqueConstraint(
+            "granter_org_id",
+            "grantee_org_id",
+            "resource_type",
+            "semester_id",
+            name="uq_org_resource_grant_scope",
+        ),
+        CheckConstraint("granter_org_id <> grantee_org_id", name="ck_grant_not_self"),
+        CheckConstraint(
+            "resource_type IN ('ROOM_POOL', 'TEACHER', 'PUBLIC_COURSE')",
+            name="ck_grant_resource_type",
+        ),
+        CheckConstraint(
+            "grant_mode IN ('FULL', 'IDLE_ONLY', 'APPROVAL_REQUIRED')",
+            name="ck_grant_mode",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    granter_org_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("org_node.id", ondelete="CASCADE"), nullable=False
+    )
+    grantee_org_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("org_node.id", ondelete="CASCADE"), nullable=False
+    )
+    semester_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("semester.id", ondelete="CASCADE"), nullable=True
+    )
+    resource_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    grant_mode: Mapped[str] = mapped_column(String(24), default="IDLE_ONLY", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    remark: Mapped[Optional[str]] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class SysUser(Base):
+    """4. 系统用户与 RBAC 角色表"""
+
+    __tablename__ = "sys_user"
+    __table_args__ = (
+        CheckConstraint(
+            "role_code IN ('SUPER_ADMIN', 'DEPT_SCHEDULER', 'LAB_ADMIN', 'TEACHER')",
+            name="ck_sys_user_role",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)  # 工号
+    real_name: Mapped[str] = mapped_column(String(60), nullable=False)
+    org_node_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False
+    )
+    role_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class ExcelImportBatch(Base):
+    """5. 双模式 Excel 导入批次与冲突审计日志表"""
+
+    __tablename__ = "excel_import_batch"
+    __table_args__ = (
+        CheckConstraint(
+            "import_type IN ('TASK_ONLY', 'PRE_SCHEDULED')",
+            name="ck_excel_import_type",
+        ),
+        CheckConstraint(
+            "status IN ('SUCCESS', 'PARTIAL_CONFLICT', 'ROLLED_BACK')",
+            name="ck_excel_import_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    semester_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("semester.id", ondelete="RESTRICT"), nullable=False
+    )
+    org_node_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False
+    )
+    operator_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("sys_user.id", ondelete="RESTRICT"), nullable=False
+    )
+    import_type: Mapped[str] = mapped_column(String(30), nullable=False)
+    file_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    total_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    conflict_rows: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False)
+    conflict_report: Mapped[Optional[dict]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+# =============================================================================
+# 域二：基础资源与时间域（4 张表）
+# 6. semester  7. timeslot  8. student_cohort  9. classroom
+# =============================================================================
+
+
+class Semester(Base):
+    """6. 学期与教学周配置表"""
+
+    __tablename__ = "semester"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(24), unique=True, nullable=False)  # 如 2026-2027-1
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    total_weeks: Mapped[int] = mapped_column(SmallInteger, default=18, nullable=False)
+    is_current: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class Timeslot(Base):
+    """7. 标准时间片字典表（支持节点级覆写：org_node_id=NULL 为全校默认）"""
+
+    __tablename__ = "timeslot"
+    __table_args__ = (
+        UniqueConstraint("org_node_id", "day_of_week", "period_index", name="uq_timeslot_node_slot"),
+        CheckConstraint("day_of_week BETWEEN 1 AND 7", name="ck_timeslot_day"),
+        CheckConstraint("period_index >= 1", name="ck_timeslot_period"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    org_node_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("org_node.id", ondelete="CASCADE"), nullable=True
+    )
+    day_of_week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    period_index: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    period_name: Mapped[str] = mapped_column(String(40), nullable=False)
+    start_time: Mapped[Optional[str]] = mapped_column(String(8))  # HH:MM
+    end_time: Mapped[Optional[str]] = mapped_column(String(8))  # HH:MM
+    is_evening: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class StudentCohort(Base):
+    """8. 行政班/学生群组表（归属 has_student_cohort=True 的组织节点）"""
+
+    __tablename__ = "student_cohort"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cohort_code: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
+    cohort_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    org_node_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False
+    )
+    grade_year: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    student_count: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+
+
+class Classroom(Base):
+    """9. 教室与专业机房/实验室表（支持独占与空闲跨院系借用策略）"""
+
+    __tablename__ = "classroom"
+    __table_args__ = (
+        CheckConstraint("capacity > 0", name="ck_classroom_capacity"),
+        CheckConstraint(
+            "room_type IN ('NORMAL', 'COMPUTER_LAB', 'NETWORK_LAB', 'TRAINING_ROOM', 'SPORTS')",
+            name="ck_classroom_type",
+        ),
+        CheckConstraint(
+            "sharing_policy IN ('EXCLUSIVE', 'IDLE_BORROW', 'PUBLIC_POOL')",
+            name="ck_classroom_sharing_policy",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    room_code: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
+    building: Mapped[str] = mapped_column(String(60), nullable=False)
+    owner_org_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False
+    )
+    capacity: Mapped[int] = mapped_column(Integer, nullable=False)
+    room_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    env_tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    sharing_policy: Mapped[str] = mapped_column(String(24), default="IDLE_BORROW", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+# =============================================================================
+# 域三：教学任务与多维约束域（4 张表）
+# 10. teaching_task  11. public_course_lock  12. teacher_unavailable  13. room_course_rule
+# =============================================================================
+
+
+class TeachingTask(Base):
+    """10. 教学任务主表（支持合班与单双周复用）"""
+
+    __tablename__ = "teaching_task"
+    __table_args__ = (
+        CheckConstraint(
+            "course_category IN ('THEORY', 'LAB', 'MIXED')",
+            name="ck_task_course_category",
+        ),
+        CheckConstraint(
+            "course_level IN ('PUBLIC', 'COLLEGE', 'DEPT')",
+            name="ck_task_course_level",
+        ),
+        CheckConstraint("week_type IN (0, 1, 2)", name="ck_task_week_type"),
+        CheckConstraint("weekly_sessions > 0", name="ck_task_weekly_sessions"),
+        CheckConstraint("total_students > 0", name="ck_task_total_students"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    semester_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("semester.id", ondelete="RESTRICT"), nullable=False
+    )
+    org_node_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False
+    )
+    course_code: Mapped[str] = mapped_column(String(40), nullable=False)
+    course_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    course_category: Mapped[str] = mapped_column(String(20), nullable=False)
+    course_level: Mapped[str] = mapped_column(String(20), default="DEPT", nullable=False)
+    teacher_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("sys_user.id", ondelete="RESTRICT"), nullable=False
+    )
+    cohort_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    weekly_sessions: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    week_type: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)  # 0全周/1单周/2双周
+    start_week: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
+    end_week: Mapped[int] = mapped_column(SmallInteger, default=18, nullable=False)
+    total_students: Mapped[int] = mapped_column(Integer, nullable=False)
+    required_env_tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    is_locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class PublicCourseLock(Base):
+    """11. 分级基线锁定表（支持校级/学院/系部多级只读锁定，单院系可跳过）"""
+
+    __tablename__ = "public_course_lock"
+    __table_args__ = (CheckConstraint("week_type IN (0, 1, 2)", name="ck_lock_week_type"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    semester_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("semester.id", ondelete="CASCADE"), nullable=False
+    )
+    lock_scope_org_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False
+    )
+    timeslot_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("timeslot.id", ondelete="RESTRICT"), nullable=False
+    )
+    week_type: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    cohort_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("student_cohort.id", ondelete="CASCADE"), nullable=True
+    )
+    classroom_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("classroom.id", ondelete="CASCADE"), nullable=True
+    )
+    teacher_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("sys_user.id", ondelete="CASCADE"), nullable=True
+    )
+    course_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    is_readonly: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class TeacherUnavailable(Base):
+    """12. 教师禁排与偏好时间表（微信端 5×5 网格采集）"""
+
+    __tablename__ = "teacher_unavailable"
+    __table_args__ = (
+        UniqueConstraint("semester_id", "teacher_id", "timeslot_id", name="uq_teacher_unavail_slot"),
+        CheckConstraint("constraint_level IN ('HARD', 'SOFT')", name="ck_teacher_unavail_level"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    semester_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("semester.id", ondelete="CASCADE"), nullable=False
+    )
+    teacher_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("sys_user.id", ondelete="CASCADE"), nullable=False
+    )
+    timeslot_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("timeslot.id", ondelete="CASCADE"), nullable=False
+    )
+    constraint_level: Mapped[str] = mapped_column(String(10), default="HARD", nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(String(120))
+
+
+class RoomCourseRule(Base):
+    """13. 机房黑白名单与课程准入规则表"""
+
+    __tablename__ = "room_course_rule"
+    __table_args__ = (
+        CheckConstraint("rule_type IN ('ALLOW', 'DENY')", name="ck_room_rule_type"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    classroom_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("classroom.id", ondelete="CASCADE"), nullable=False
+    )
+    course_code: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    course_category: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    rule_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    priority: Mapped[int] = mapped_column(SmallInteger, default=10, nullable=False)
+
+
+# =============================================================================
+# 域四：排课方案、调停课与归档审计域（3 张表）
+# 14. schedule_plan  15. schedule_detail  16. schedule_change_audit
+# =============================================================================
+
+
+class SchedulePlan(Base):
+    """14. 排课方案版本与云盘归档表"""
+
+    __tablename__ = "schedule_plan"
+    __table_args__ = (
+        CheckConstraint(
+            "run_mode IN ('SINGLE_DEPT', 'SCHOOL_WIDE')",
+            name="ck_plan_run_mode",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    semester_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("semester.id", ondelete="RESTRICT"), nullable=False
+    )
+    org_node_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False
+    )
+    plan_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    version_tag: Mapped[str] = mapped_column(String(40), nullable=False)
+    run_mode: Mapped[str] = mapped_column(String(20), default="SINGLE_DEPT", nullable=False)
+    fitness_score: Mapped[Optional[float]] = mapped_column(Numeric(10, 2))
+    cloud_archive_path: Mapped[Optional[str]] = mapped_column(String(500))
+    is_published: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class ScheduleDetail(Base):
+    """15. 课表明细表（核心求解输出与毫秒级拖拽微调表）"""
+
+    __tablename__ = "schedule_detail"
+    __table_args__ = (
+        UniqueConstraint(
+            "plan_id", "timeslot_id", "classroom_id", "week_type", name="uq_detail_room_slot_week"
+        ),
+        CheckConstraint("week_type IN (0, 1, 2)", name="ck_detail_week_type"),
+        Index("ix_schedule_detail_plan_slot", "plan_id", "timeslot_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plan_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("schedule_plan.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("teaching_task.id", ondelete="RESTRICT"), nullable=False
+    )
+    timeslot_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("timeslot.id", ondelete="RESTRICT"), nullable=False
+    )
+    classroom_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("classroom.id", ondelete="RESTRICT"), nullable=False
+    )
+    week_type: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    is_manual_adjusted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class ScheduleChangeAudit(Base):
+    """16. 调停课审批流与云盘归档异步重试审计表"""
+
+    __tablename__ = "schedule_change_audit"
+    __table_args__ = (
+        CheckConstraint(
+            "audit_type IN ('CHANGE_REQUEST', 'ARCHIVE_SYNC')",
+            name="ck_audit_type",
+        ),
+        CheckConstraint(
+            "status IN ('PENDING', 'APPROVED', 'REJECTED', 'SYNCED', 'FAILED')",
+            name="ck_audit_status",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plan_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("schedule_plan.id", ondelete="CASCADE"), nullable=False
+    )
+    operator_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("sys_user.id", ondelete="RESTRICT"), nullable=False
+    )
+    audit_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="PENDING", nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    retry_count: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    remark: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
