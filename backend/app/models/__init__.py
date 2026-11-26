@@ -15,6 +15,8 @@ from app.models.core import (
     SchedulePlan,
     ScheduleDetail,
     ScheduleChangeAudit,
+    SystemConfig,
+    SchedulePolicyRule,
 )
 
 __all__ = [
@@ -34,4 +36,6 @@ __all__ = [
     "SchedulePlan",
     "ScheduleDetail",
     "ScheduleChangeAudit",
+    "SystemConfig",
+    "SchedulePolicyRule",
 ]

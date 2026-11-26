@@ -1,6 +1,10 @@
 """
-核心数据模型（16 张表）
-V1.1 升级：支持校级/院级/系级/专业级四级排课管理员、机房管理员、任课教师与学生（关联行政班 cohort_id）。
+核心数据模型（V1.2 数据库全动态驱动）
+在原 16 张核心表基础上平滑扩展：
+- Classroom 增加 usage_mode ('FIXED'固定教室 / 'FLOATING'流动教室) 与 fixed_cohort_id
+- Semester 增加 start_date / end_date（支持排课大时间周期自定义）
+- 新增 SystemConfig（自定义系统名称、正式发布隐藏体验账号开关）
+- 新增 SchedulePolicyRule（高内聚统一规则引擎：支持针对全局/单教师/单班级/单教室设置必排/禁排/优先时段，如每天1-2节必排）
 """
 from datetime import datetime
 from typing import Optional
@@ -71,34 +75,16 @@ class OrgNode(Base):
 class OrgResourceGrant(Base):
     __tablename__ = "org_resource_grant"
     __table_args__ = (
-        UniqueConstraint(
-            "granter_org_id",
-            "grantee_org_id",
-            "resource_type",
-            "semester_id",
-            name="uq_org_resource_grant_scope",
-        ),
+        UniqueConstraint("granter_org_id", "grantee_org_id", "resource_type", "semester_id", name="uq_org_resource_grant_scope"),
         CheckConstraint("granter_org_id <> grantee_org_id", name="ck_grant_not_self"),
-        CheckConstraint(
-            "resource_type IN ('ROOM_POOL', 'TEACHER', 'PUBLIC_COURSE')",
-            name="ck_grant_resource_type",
-        ),
-        CheckConstraint(
-            "grant_mode IN ('FULL', 'IDLE_ONLY', 'APPROVAL_REQUIRED')",
-            name="ck_grant_mode",
-        ),
+        CheckConstraint("resource_type IN ('ROOM_POOL', 'TEACHER', 'PUBLIC_COURSE')", name="ck_grant_resource_type"),
+        CheckConstraint("grant_mode IN ('FULL', 'IDLE_ONLY', 'APPROVAL_REQUIRED')", name="ck_grant_mode"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    granter_org_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("org_node.id", ondelete="CASCADE"), nullable=False
-    )
-    grantee_org_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("org_node.id", ondelete="CASCADE"), nullable=False
-    )
-    semester_id: Mapped[Optional[int]] = mapped_column(
-        Integer, ForeignKey("semester.id", ondelete="CASCADE"), nullable=True
-    )
+    granter_org_id: Mapped[int] = mapped_column(Integer, ForeignKey("org_node.id", ondelete="CASCADE"), nullable=False)
+    grantee_org_id: Mapped[int] = mapped_column(Integer, ForeignKey("org_node.id", ondelete="CASCADE"), nullable=False)
+    semester_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("semester.id", ondelete="CASCADE"), nullable=True)
     resource_type: Mapped[str] = mapped_column(String(24), nullable=False)
     grant_mode: Mapped[str] = mapped_column(String(24), default="IDLE_ONLY", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -107,8 +93,6 @@ class OrgResourceGrant(Base):
 
 
 class SysUser(Base):
-    """系统用户与分级 RBAC 角色表（支持校级/院级/系级/专业级排课员、机房管理员、教师、学生）"""
-
     __tablename__ = "sys_user"
     __table_args__ = (
         CheckConstraint(
@@ -120,12 +104,8 @@ class SysUser(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     real_name: Mapped[str] = mapped_column(String(60), nullable=False)
-    org_node_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False
-    )
-    cohort_id: Mapped[Optional[int]] = mapped_column(
-        Integer, ForeignKey("student_cohort.id", ondelete="SET NULL"), nullable=True
-    )
+    org_node_id: Mapped[int] = mapped_column(Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False)
+    cohort_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("student_cohort.id", ondelete="SET NULL"), nullable=True)
     role_code: Mapped[str] = mapped_column(String(30), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -159,6 +139,8 @@ class Semester(Base):
     code: Mapped[str] = mapped_column(String(24), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     total_weeks: Mapped[int] = mapped_column(SmallInteger, default=18, nullable=False)
+    start_date: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)  # YYYY-MM-DD
+    end_date: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)  # YYYY-MM-DD
     is_current: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
@@ -171,9 +153,7 @@ class Timeslot(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    org_node_id: Mapped[Optional[int]] = mapped_column(
-        Integer, ForeignKey("org_node.id", ondelete="CASCADE"), nullable=True
-    )
+    org_node_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("org_node.id", ondelete="CASCADE"), nullable=True)
     day_of_week: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     period_index: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     period_name: Mapped[str] = mapped_column(String(40), nullable=False)
@@ -194,11 +174,14 @@ class StudentCohort(Base):
 
 
 class Classroom(Base):
+    """教室与机房表（支持 FIXED 固定教室绑定班级 / FLOATING 流动教室动态调度）"""
+
     __tablename__ = "classroom"
     __table_args__ = (
         CheckConstraint("capacity > 0", name="ck_classroom_capacity"),
         CheckConstraint("room_type IN ('NORMAL', 'COMPUTER_LAB', 'NETWORK_LAB', 'TRAINING_ROOM', 'SPORTS')", name="ck_classroom_type"),
         CheckConstraint("sharing_policy IN ('EXCLUSIVE', 'IDLE_BORROW', 'PUBLIC_POOL')", name="ck_classroom_sharing_policy"),
+        CheckConstraint("usage_mode IN ('FIXED', 'FLOATING')", name="ck_classroom_usage_mode"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -207,6 +190,8 @@ class Classroom(Base):
     owner_org_id: Mapped[int] = mapped_column(Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False)
     capacity: Mapped[int] = mapped_column(Integer, nullable=False)
     room_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    usage_mode: Mapped[str] = mapped_column(String(16), default="FLOATING", nullable=False)  # FIXED / FLOATING
+    fixed_cohort_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("student_cohort.id", ondelete="SET NULL"), nullable=True)
     env_tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     sharing_policy: Mapped[str] = mapped_column(String(24), default="IDLE_BORROW", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -332,3 +317,34 @@ class ScheduleChangeAudit(Base):
     retry_count: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
     remark: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
+class SystemConfig(Base):
+    """动态系统配置表（自定义系统名称、正式版隐藏体验账号等，零硬编码）"""
+
+    __tablename__ = "system_config"
+
+    config_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    config_value: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class SchedulePolicyRule(Base):
+    """高内聚统一排课策略表：支持按学期、按全局/单教师/单班级/单教室设定必排/禁排/优先时段"""
+
+    __tablename__ = "schedule_policy_rule"
+    __table_args__ = (
+        CheckConstraint("target_type IN ('GLOBAL', 'TEACHER', 'COHORT', 'CLASSROOM')", name="ck_policy_target_type"),
+        CheckConstraint("rule_type IN ('MUST_SCHEDULE', 'FORBID_SCHEDULE', 'PREFER_SCHEDULE')", name="ck_policy_rule_type"),
+        CheckConstraint("day_of_week BETWEEN 0 AND 7", name="ck_policy_day"),  # 0=每天
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    semester_id: Mapped[int] = mapped_column(Integer, ForeignKey("semester.id", ondelete="CASCADE"), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    target_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # GLOBAL 为 NULL
+    rule_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    day_of_week: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)  # 0=每天, 1..7=周一至周日
+    period_index: Mapped[int] = mapped_column(SmallInteger, nullable=False)  # 1=(1-2节), 2=(3-4节)...
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    remark: Mapped[Optional[str]] = mapped_column(String(160))

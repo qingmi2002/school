@@ -6,6 +6,7 @@ from app.api.exporter import router as exporter_router
 from app.api.importer import router as importer_router
 from app.api.locks import router as locks_router
 from app.api.org import router as org_router
+from app.api.resources import router as resources_router
 from app.api.solver import router as solver_router
 from app.api.system import router as system_router
 from app.api.validator import router as validator_router
@@ -27,6 +28,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
+app.include_router(resources_router, prefix=settings.API_V1_PREFIX)
 app.include_router(system_router, prefix=settings.API_V1_PREFIX)
 app.include_router(org_router, prefix=settings.API_V1_PREFIX)
 app.include_router(locks_router, prefix=settings.API_V1_PREFIX)

@@ -1,4 +1,4 @@
-"""T1.2 验收门禁测试：16 张核心表、外键约束、唯一约束、多级树校区溯源与 6 类架构预设。"""
+"""核心数据表与外键/唯一约束测试（V1.2 共 18 张表：原 16 张核心表 + system_config + schedule_policy_rule）。"""
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
@@ -40,8 +40,8 @@ def db_session():
     session.close()
 
 
-def test_exactly_16_core_tables_registered():
-    assert len(Base.metadata.tables) == 16
+def test_core_tables_registered():
+    assert len(Base.metadata.tables) == 18
 
 
 def test_multi_campus_boundary_resolution_and_lateral_grant(db_session):
@@ -68,7 +68,6 @@ def test_multi_campus_boundary_resolution_and_lateral_grant(db_session):
     node_map = {n.id: n for n in db_session.query(OrgNode).all()}
     assert resolve_campus_boundary_id(node_map, dept_cs.id) == campus_a.id
 
-    # 横向资源授权：实训中心空闲时授权给计算机系借用
     grant = OrgResourceGrant(
         granter_org_id=lab_center.id,
         grantee_org_id=dept_cs.id,
@@ -79,7 +78,6 @@ def test_multi_campus_boundary_resolution_and_lateral_grant(db_session):
     db_session.add(grant)
     db_session.commit()
 
-    # 校验自授权应触发 CHECK 约束拦截
     bad_grant = OrgResourceGrant(
         granter_org_id=dept_cs.id,
         grantee_org_id=dept_cs.id,
@@ -110,12 +108,10 @@ def test_room_slot_uniqueness_and_odd_even_week_reuse(db_session):
     db_session.add_all([task1, task2, plan])
     db_session.flush()
 
-    # 单周(1)与双周(2)允许复用同一时间片同一机房
     db_session.add(ScheduleDetail(plan_id=plan.id, task_id=task1.id, timeslot_id=slot.id, classroom_id=room.id, week_type=1))
     db_session.add(ScheduleDetail(plan_id=plan.id, task_id=task2.id, timeslot_id=slot.id, classroom_id=room.id, week_type=2))
     db_session.commit()
 
-    # 同一机房同一时间片同一周次(单周=1)重复排课应触发唯一约束拦截
     db_session.add(ScheduleDetail(plan_id=plan.id, task_id=task2.id, timeslot_id=slot.id, classroom_id=room.id, week_type=1))
     with pytest.raises(IntegrityError):
         db_session.commit()
