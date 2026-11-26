@@ -5,11 +5,12 @@ from app.api.importer import router as importer_router
 from app.api.locks import router as locks_router
 from app.api.org import router as org_router
 from app.api.solver import router as solver_router
+from app.api.validator import router as validator_router
 from app.core.config import settings
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    version="0.7.0",
+    version="0.8.0",
     openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
 )
 
@@ -26,6 +27,7 @@ app.include_router(locks_router, prefix=settings.API_V1_PREFIX)
 app.include_router(constraints_router, prefix=settings.API_V1_PREFIX)
 app.include_router(solver_router, prefix=settings.API_V1_PREFIX)
 app.include_router(importer_router, prefix=settings.API_V1_PREFIX)
+app.include_router(validator_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/health", tags=["system"])
@@ -34,5 +36,5 @@ def health_check():
         "status": "ok",
         "service": settings.PROJECT_NAME,
         "mode": "multi-level-flexible",
-        "milestone": "M2-complete",
+        "version": "0.8.0",
     }
