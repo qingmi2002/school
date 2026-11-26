@@ -2,10 +2,13 @@
   <el-container class="app-shell">
     <el-header class="app-header">
       <div class="brand">高校分级智能排课系统（多级通用版）</div>
-      <el-tag type="success" effect="plain">M2 里程碑 · 约束采集端</el-tag>
+      <el-tag type="success" effect="plain">M3 里程碑 · 排课与冲突工作台</el-tag>
     </el-header>
     <el-main class="app-main">
       <el-tabs v-model="activeTab" type="border-card">
+        <el-tab-pane label="二维课表拖拽工作台" name="workbench">
+          <ScheduleWorkbench />
+        </el-tab-pane>
         <el-tab-pane label="教师禁排填报 (H5)" name="teacher">
           <TeacherUnavailableGrid />
         </el-tab-pane>
@@ -19,10 +22,11 @@
 
 <script setup lang="ts">
 import { ref } from "vue";
+import ScheduleWorkbench from "./components/ScheduleWorkbench.vue";
 import TeacherUnavailableGrid from "./components/TeacherUnavailableGrid.vue";
 import RoomRuleManager from "./components/RoomRuleManager.vue";
 
-const activeTab = ref("teacher");
+const activeTab = ref("workbench");
 </script>
 
 <style scoped>
@@ -44,7 +48,7 @@ const activeTab = ref("teacher");
   color: #111827;
 }
 .app-main {
-  max-width: 1120px;
+  max-width: 1280px;
   width: 100%;
   margin: 0 auto;
   padding: 16px;
