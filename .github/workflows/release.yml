@@ -1,0 +1,51 @@
+name: Build & Publish Production Images (Release)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "发版版本号（例如 v1.0.0）"
+        required: true
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version tag
+        id: meta
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "TAG=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "TAG=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & Push Backend Image
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          docker build -f backend/Dockerfile.prod -t ghcr.io/${OWNER}/smart-schedule-backend:${{ steps.meta.outputs.TAG }} ./backend
+          docker push ghcr.io/${OWNER}/smart-schedule-backend:${{ steps.meta.outputs.TAG }}
+
+      - name: Build & Push Web Image
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          docker build -f frontend/Dockerfile.prod -t ghcr.io/${OWNER}/smart-schedule-web:${{ steps.meta.outputs.TAG }} ./frontend
+          docker push ghcr.io/${OWNER}/smart-schedule-web:${{ steps.meta.outputs.TAG }}
