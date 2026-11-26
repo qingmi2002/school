@@ -1,93 +1,70 @@
 <template>
   <LoginView v-if="!currentUser" @logged-in="onLoggedIn" />
 
-  <el-container v-else class="layout-root">
-    <!-- 左侧专业深色导航 + 组织架构树 -->
-    <el-aside width="268px" class="sidebar">
-      <div class="sidebar-logo">
-        <div class="logo-title">高校智能排课系统</div>
-        <div class="logo-sub">{{ currentUser.role_label }}</div>
+  <el-container v-else class="erp-shell">
+    <!-- 传统教务软件标准顶部通栏（48px 紧凑型） -->
+    <el-header height="48px" class="erp-header">
+      <div class="h-left">
+        <span class="sys-name">{{ siteName }}</span>
+        <span class="divider">|</span>
+        <span class="node-tag">{{ selectedNode?.node_name || currentUser.org_node_name }}</span>
       </div>
 
-      <div class="menu-section-title">功能导航</div>
-      <el-menu
-        :default-active="activeMenu"
-        background-color="#0f172a"
-        text-color="#cbd5e1"
-        active-text-color="#60a5fa"
-        class="side-menu"
-        @select="handleMenuSelect"
-      >
-        <template v-if="isAdminRole">
-          <el-menu-item index="workbench">📅 二维课表拖拽工作台</el-menu-item>
-          <el-menu-item index="org">🏛️ 组织架构与分级权限</el-menu-item>
-          <el-menu-item index="rooms">🖥️ 机房标签与黑白名单</el-menu-item>
-          <el-menu-item index="export">📦 教务导出与云盘归档</el-menu-item>
-          <el-menu-item index="teacher-grid">📝 教师禁排网格(预览)</el-menu-item>
-        </template>
+      <div class="h-right">
+        <el-badge :is-dot="Boolean(versionInfo?.has_update)">
+          <el-button size="small" link style="color: #e2e8f0" @click="upgradeDialogVisible = true">
+            {{ versionInfo?.has_update ? `新版本 ${versionInfo.latest_version}` : (versionInfo?.current_version || "v1.2.0") }}
+          </el-button>
+        </el-badge>
+        <span class="user-info">{{ currentUser.real_name }}（{{ currentUser.role_label }}）</span>
+        <el-button size="small" link style="color: #fca5a5" @click="handleLogout">退出</el-button>
+      </div>
+    </el-header>
 
-        <template v-else-if="currentUser.role_code === 'TEACHER'">
-          <el-menu-item index="my-schedule">📅 我的个人教学课表</el-menu-item>
-          <el-menu-item index="teacher-grid">📝 禁排时间填报 (5×5)</el-menu-item>
-        </template>
-
-        <template v-else>
-          <el-menu-item index="my-schedule">🎓 我的班级学期课表</el-menu-item>
-        </template>
-      </el-menu>
-
-      <!-- 管理员专属：左侧多级组织架构树 -->
-      <div v-if="isAdminRole" class="tree-box">
-        <div class="menu-section-title">组织架构树（按权限范围）</div>
-        <el-tree
-          :data="orgTree"
-          node-key="id"
-          default-expand-all
-          highlight-current
-          :props="{ label: 'node_name', children: 'children' }"
-          class="dark-tree"
-          @node-click="onTreeNodeClick"
+    <el-container class="erp-body">
+      <!-- 左侧紧凑导航（210px：极简关键字菜单 + 组织树） -->
+      <el-aside width="210px" class="erp-aside">
+        <el-menu
+          :default-active="activeMenu"
+          class="erp-menu"
+          @select="(idx: string) => (activeMenu = idx)"
         >
-          <template #default="{ data }">
-            <span class="tree-node-row">
-              <span>{{ data.node_name }}</span>
-              <span class="tree-badge">{{ nodeTypeLabel(data.node_type_code) }}</span>
-            </span>
+          <template v-if="isAdminRole">
+            <el-menu-item index="workbench">排课工作台</el-menu-item>
+            <el-menu-item index="resources">基础数据</el-menu-item>
+            <el-menu-item index="rules">周期与规则</el-menu-item>
+            <el-menu-item index="org">组织权限</el-menu-item>
+            <el-menu-item index="rooms">机房规则</el-menu-item>
+            <el-menu-item index="export">导入导出</el-menu-item>
+            <el-menu-item v-if="currentUser.role_code === 'SUPER_ADMIN'" index="settings">系统设置</el-menu-item>
           </template>
-        </el-tree>
-      </div>
-    </el-aside>
+          <template v-else-if="currentUser.role_code === 'TEACHER'">
+            <el-menu-item index="my-schedule">我的课表</el-menu-item>
+            <el-menu-item index="teacher-grid">禁排填报</el-menu-item>
+          </template>
+          <template v-else>
+            <el-menu-item index="my-schedule">班级课表</el-menu-item>
+          </template>
+        </el-menu>
 
-    <!-- 右侧主工作区 -->
-    <el-container class="right-shell">
-      <el-header class="top-header">
-        <div class="header-left">
-          <span class="crumb-main">{{ currentMenuTitle }}</span>
-          <el-tag v-if="selectedNode" size="small" effect="plain" type="primary">
-            当前节点：{{ selectedNode.node_name }}
-          </el-tag>
+        <div v-if="isAdminRole" class="tree-panel">
+          <div class="tree-title">组织架构</div>
+          <el-tree
+            :data="orgTree"
+            node-key="id"
+            default-expand-all
+            highlight-current
+            :props="{ label: 'node_name', children: 'children' }"
+            @node-click="(n: OrgNodeTreeItem) => (selectedNode = n)"
+          />
         </div>
+      </el-aside>
 
-        <div class="header-right">
-          <el-badge :is-dot="Boolean(versionInfo?.has_update)">
-            <el-button
-              size="small"
-              :type="versionInfo?.has_update ? 'warning' : 'default'"
-              @click="upgradeDialogVisible = true"
-            >
-              {{ versionInfo?.has_update ? `发现新版本 ${versionInfo.latest_version}` : (versionInfo?.current_version || "v1.1.0") }}
-            </el-button>
-          </el-badge>
-
-          <el-tag type="info" effect="light">
-            {{ currentUser.real_name }} · {{ currentUser.org_node_name }}
-          </el-tag>
-          <el-button size="small" type="danger" plain @click="handleLogout">切换账号</el-button>
-        </div>
-      </el-header>
-
-      <el-main class="workspace-main">
+      <!-- 右侧标准业务内容区 -->
+      <el-main class="erp-main">
         <ScheduleWorkbench v-if="activeMenu === 'workbench'" />
+        <ResourceManageView v-else-if="activeMenu === 'resources'" :active-org-id="selectedNode?.id || currentUser.org_node_id" />
+        <CycleAndRuleView v-else-if="activeMenu === 'rules'" />
         <OrgPermissionView
           v-else-if="activeMenu === 'org'"
           :selected-node="selectedNode"
@@ -95,25 +72,22 @@
         />
         <RoomRuleManager v-else-if="activeMenu === 'rooms'" />
         <ArchiveExportView v-else-if="activeMenu === 'export'" />
+        <SystemSettingView v-else-if="activeMenu === 'settings'" @updated="(n: string) => (siteName = n)" />
         <TeacherUnavailableGrid v-else-if="activeMenu === 'teacher-grid'" />
         <PersonalScheduleView v-else-if="activeMenu === 'my-schedule'" />
       </el-main>
     </el-container>
 
-    <!-- 手动确认升级弹窗 -->
-    <el-dialog v-model="upgradeDialogVisible" title="版本检测与手动确认升级" width="560px">
-      <div v-if="versionInfo" class="upgrade-box">
+    <el-dialog v-model="upgradeDialogVisible" title="版本检测与手动升级" width="520px">
+      <div v-if="versionInfo" style="display: flex; flex-direction: column; gap: 10px">
         <el-alert
-          :title="versionInfo.has_update ? `检测到新版本 ${versionInfo.latest_version}` : `当前版本 ${versionInfo.current_version} 已是最新`"
+          :title="versionInfo.has_update ? `发现新版本 ${versionInfo.latest_version}` : `当前版本 ${versionInfo.current_version} 已是最新`"
           :type="versionInfo.has_update ? 'warning' : 'success'"
           :description="versionInfo.release_notes"
           show-icon
           :closable="false"
         />
-        <div class="sec-label">Linux 服务器手动升级命令（先自动热备数据库）：</div>
         <el-input :model-value="versionInfo.linux_upgrade_cmd" readonly size="small" />
-        <div class="sec-label">NAS 手动升级指引：</div>
-        <div class="nas-tip">{{ versionInfo.nas_upgrade_tip }}</div>
       </div>
       <template #footer>
         <el-button size="small" @click="checkUpdate(true)">重新检测</el-button>
@@ -133,14 +107,19 @@ import {
   type UserProfile,
   type VersionInfo,
 } from "./api/client";
+import { getSiteConfig } from "./api/resources";
 import LoginView from "./components/LoginView.vue";
 import ScheduleWorkbench from "./components/ScheduleWorkbench.vue";
+import ResourceManageView from "./components/ResourceManageView.vue";
+import CycleAndRuleView from "./components/CycleAndRuleView.vue";
 import OrgPermissionView from "./components/OrgPermissionView.vue";
 import RoomRuleManager from "./components/RoomRuleManager.vue";
 import ArchiveExportView from "./components/ArchiveExportView.vue";
+import SystemSettingView from "./components/SystemSettingView.vue";
 import TeacherUnavailableGrid from "./components/TeacherUnavailableGrid.vue";
 import PersonalScheduleView from "./components/PersonalScheduleView.vue";
 
+const siteName = ref("智能排课系统");
 const currentUser = ref<UserProfile | null>(null);
 const activeMenu = ref("workbench");
 const orgTree = ref<OrgNodeTreeItem[]>([]);
@@ -152,38 +131,6 @@ const isAdminRole = computed(() => {
   const r = currentUser.value?.role_code || "";
   return r === "SUPER_ADMIN" || r.includes("SCHEDULER") || r === "LAB_ADMIN";
 });
-
-const menuTitles: Record<string, string> = {
-  workbench: "二维课表拖拽工作台",
-  org: "组织架构与分级权限中心",
-  rooms: "机房标签与黑白名单管控",
-  export: "教务回填导出与云盘归档",
-  "teacher-grid": "教师禁排时间填报 (5×5)",
-  "my-schedule": "个人 / 班级课表查询",
-};
-
-const currentMenuTitle = computed(() => menuTitles[activeMenu.value] || "智能排课系统");
-
-function nodeTypeLabel(code: string): string {
-  const map: Record<string, string> = {
-    SCHOOL: "校",
-    CAMPUS: "校区",
-    COLLEGE: "院",
-    DEPT: "系",
-    MAJOR: "专业",
-    PUBLIC_DEPT: "公教",
-    TRAINING_CENTER: "实训",
-  };
-  return map[code] || code;
-}
-
-function handleMenuSelect(index: string): void {
-  activeMenu.value = index;
-}
-
-function onTreeNodeClick(node: OrgNodeTreeItem): void {
-  selectedNode.value = node;
-}
 
 async function initAfterLogin(user: UserProfile): Promise<void> {
   currentUser.value = user;
@@ -215,11 +162,17 @@ async function checkUpdate(force = false): Promise<void> {
   try {
     versionInfo.value = await fetchSystemVersion(force);
   } catch {
-    // 离线态静默忽略
+    // 忽略
   }
 }
 
 onMounted(async () => {
+  try {
+    const cfg = await getSiteConfig();
+    siteName.value = cfg.site_name;
+  } catch {
+    // 忽略
+  }
   const token = localStorage.getItem("ss_token");
   if (token) {
     try {
@@ -233,72 +186,39 @@ onMounted(async () => {
 </script>
 
 <style>
-body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; background: #f0f2f5; }
 </style>
 
 <style scoped>
-.layout-root { min-height: 100vh; }
-.sidebar {
-  background: #0f172a;
-  color: #f8fafc;
+.erp-shell { min-height: 100vh; display: flex; flex-direction: column; }
+.erp-header {
+  background: #1e3a5f;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+}
+.h-left, .h-right { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.sys-name { font-size: 15px; font-weight: 600; }
+.divider { opacity: 0.4; }
+.node-tag { font-size: 12px; color: #bfdbfe; }
+.user-info { font-size: 12px; color: #e2e8f0; }
+.erp-body { flex: 1; }
+.erp-aside {
+  background: #ffffff;
+  border-right: 1px solid #dcdfe6;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #1e293b;
 }
-.sidebar-logo {
-  padding: 20px 18px 16px;
-  border-bottom: 1px solid #1e293b;
-}
-.logo-title { font-size: 16px; font-weight: 700; color: #f8fafc; }
-.logo-sub { font-size: 12px; color: #60a5fa; margin-top: 4px; }
-.menu-section-title {
-  font-size: 11px;
-  color: #64748b;
-  padding: 14px 18px 6px;
-  letter-spacing: 0.5px;
-}
-.side-menu { border-right: none; }
-.tree-box {
+.erp-menu { border-right: none; }
+:deep(.erp-menu .el-menu-item) { height: 40px; line-height: 40px; font-size: 13px; }
+.tree-panel {
+  border-top: 1px solid #ebeef5;
+  padding: 10px 8px;
   flex: 1;
   overflow-y: auto;
-  border-top: 1px solid #1e293b;
-  padding-bottom: 16px;
 }
-.dark-tree {
-  background: transparent;
-  color: #cbd5e1;
-  padding: 0 8px;
-}
-:deep(.dark-tree .el-tree-node__content:hover) { background: #1e293b; }
-:deep(.dark-tree .el-tree-node.is-current > .el-tree-node__content) { background: #1d4ed8; color: #ffffff; border-radius: 6px; }
-.tree-node-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding-right: 8px;
-  font-size: 13px;
-}
-.tree-badge {
-  font-size: 10px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: rgba(148, 163, 184, 0.2);
-  color: #93c5fd;
-}
-.right-shell { background: #f1f5f9; }
-.top-header {
-  background: #ffffff;
-  border-bottom: 1px solid #e2e8f0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 20px;
-}
-.header-left, .header-right { display: flex; align-items: center; gap: 10px; }
-.crumb-main { font-weight: 600; font-size: 15px; color: #0f172a; }
-.workspace-main { padding: 16px; }
-.upgrade-box { display: flex; flex-direction: column; gap: 10px; }
-.sec-label { font-size: 13px; font-weight: 600; margin-top: 4px; }
-.nas-tip { font-size: 12px; color: #475569; background: #f8fafc; padding: 10px; border-radius: 6px; border: 1px solid #e2e8f0; }
+.tree-title { font-size: 12px; font-weight: 600; color: #606266; padding: 0 8px 6px; }
+.erp-main { padding: 12px; background: #f0f2f5; }
 </style>
