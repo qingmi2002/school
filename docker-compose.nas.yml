@@ -1,13 +1,7 @@
 # ==============================================================================
-# 高校分级智能排课系统（多级通用版）— NAS 极简一键部署模板（已预填 qingmi2002）
+# 高校分级智能排课系统（多级通用版）— NAS 官方源一键部署模板（已内置 pull_policy: always）
 # 适用平台：群晖 (Container Manager)、飞牛 OS (fnOS)、极空间、绿联、威联通、1Panel、Portainer
-#
-# 使用方法（零修改直接粘贴）：
-#   1. 先在 https://github.com/qingmi2002/school/actions 点一次
-#      "Build & Publish Production Images" -> Run workflow 生成 :latest 镜像，
-#      并在 GitHub Packages 中将两个镜像设为 Public。
-#   2. 在 NAS Docker Compose 新建项目，直接全文粘贴本文件，点击“启动”即可！
-#   3. 访问 http://NAS的IP:8088 即可使用；排课归档自动保存在 ./cloud_archive 目录。
+# 升级方式：以后每次在 NAS 点“构建”，Docker 自动核对远端 :latest 哈希值并原地无损升级（数据 100% 保留）。
 # ==============================================================================
 
 services:
@@ -39,6 +33,7 @@ services:
 
   backend:
     image: ghcr.io/qingmi2002/smart-schedule-backend:latest
+    pull_policy: always
     container_name: smart_schedule_backend
     restart: unless-stopped
     environment:
@@ -59,6 +54,7 @@ services:
 
   celery-worker:
     image: ghcr.io/qingmi2002/smart-schedule-backend:latest
+    pull_policy: always
     container_name: smart_schedule_worker
     restart: unless-stopped
     environment:
@@ -80,6 +76,7 @@ services:
 
   web:
     image: ghcr.io/qingmi2002/smart-schedule-web:latest
+    pull_policy: always
     container_name: smart_schedule_web
     restart: unless-stopped
     depends_on:

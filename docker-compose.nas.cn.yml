@@ -1,16 +1,7 @@
 # ==============================================================================
-# 高校分级智能排课系统（多级通用版）— NAS 国内镜像加速源一键部署模板
-# 适用场景：国内宽带直连 Docker Hub / GHCR 缓慢或 IPv6 断流（connection reset）
+# 高校分级智能排课系统（多级通用版）— NAS 国内镜像加速源一键部署模板（已内置 pull_policy: always）
 # 适用平台：群晖 (Container Manager)、飞牛 OS (fnOS)、极空间、绿联、威联通、1Panel、Portainer
-#
-# 镜像加速说明：
-#   - PostgreSQL / Redis 使用 DaoCloud 国内镜像代理 (docker.m.daocloud.io)
-#   - 排课前后端镜像使用南京大学 GHCR 镜像代理 (ghcr.nju.edu.cn)
-#     （如 ghcr.nju.edu.cn 临时波动，可全局替换为 ghcr.m.daocloud.io）
-#
-# 使用方法：
-#   1. 在 NAS Docker Compose 新建项目，直接全文粘贴本文件，点击“启动”即可！
-#   2. 浏览器访问 http://NAS的IP:8088 即可使用；排课归档自动落入 ./cloud_archive 目录。
+# 升级方式：以后每次在 NAS 点“构建”，Docker 自动联网核对远端 :latest 并原地无损升级（数据 100% 保留）。
 # ==============================================================================
 
 services:
@@ -42,6 +33,7 @@ services:
 
   backend:
     image: ghcr.nju.edu.cn/qingmi2002/smart-schedule-backend:latest
+    pull_policy: always
     container_name: smart_schedule_backend
     restart: unless-stopped
     environment:
@@ -62,6 +54,7 @@ services:
 
   celery-worker:
     image: ghcr.nju.edu.cn/qingmi2002/smart-schedule-backend:latest
+    pull_policy: always
     container_name: smart_schedule_worker
     restart: unless-stopped
     environment:
@@ -83,6 +76,7 @@ services:
 
   web:
     image: ghcr.nju.edu.cn/qingmi2002/smart-schedule-web:latest
+    pull_policy: always
     container_name: smart_schedule_web
     restart: unless-stopped
     depends_on:
