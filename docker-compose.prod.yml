@@ -1,0 +1,75 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: smart_schedule_pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-smart_schedule}
+      POSTGRES_USER: ${POSTGRES_USER:-schedule_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - ${DATA_ROOT:-/opt/smart-schedule/data}/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-schedule_admin} -d ${POSTGRES_DB:-smart_schedule}"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    container_name: smart_schedule_redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  backend:
+    image: ${BACKEND_IMAGE:-smart-schedule-backend:v1.0.0}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: smart_schedule_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ${DATA_ROOT:-/opt/smart-schedule/data}/archive_staging:/app/archive_staging
+      - ${DATA_ROOT:-/opt/smart-schedule/data}/cloud_archive:/mnt/cloud_drive/SmartSchedule_Archive
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-worker:
+    image: ${BACKEND_IMAGE:-smart-schedule-backend:v1.0.0}
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    container_name: smart_schedule_worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ${DATA_ROOT:-/opt/smart-schedule/data}/archive_staging:/app/archive_staging
+      - ${DATA_ROOT:-/opt/smart-schedule/data}/cloud_archive:/mnt/cloud_drive/SmartSchedule_Archive
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.core.celery_app:celery_app worker --loglevel=info --concurrency=4
+
+  web:
+    image: ${FRONTEND_IMAGE:-smart-schedule-web:v1.0.0}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    container_name: smart_schedule_web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${APP_PORT:-80}:80"
