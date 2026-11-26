@@ -18,8 +18,8 @@ def test_version_endpoint_detects_update_and_handles_offline(monkeypatch):
         sys_api,
         "fetch_latest_github_release",
         lambda repo, timeout=5.0: {
-            "tag_name": "v1.2.0",
-            "html_url": "https://github.com/qingmi2002/school/releases/tag/v1.2.0",
+            "tag_name": "v99.0.0",
+            "html_url": "https://github.com/qingmi2002/school/releases/tag/v99.0.0",
             "body": "新增跨校区通勤优化与一键归档增强",
         },
     )
@@ -27,7 +27,7 @@ def test_version_endpoint_detects_update_and_handles_offline(monkeypatch):
     assert r1.status_code == 200
     body1 = r1.json()
     assert body1["has_update"] is True
-    assert body1["latest_version"] == "v1.2.0"
+    assert body1["latest_version"] == "v99.0.0"
     assert "deploy.sh --upgrade" in body1["linux_upgrade_cmd"]
 
     def _offline(*args, **kwargs):
