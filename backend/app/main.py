@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.api.constraints import router as constraints_router
 from app.api.importer import router as importer_router
 from app.api.locks import router as locks_router
 from app.api.org import router as org_router
@@ -8,7 +9,7 @@ from app.core.config import settings
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    version="0.6.0",
+    version="0.7.0",
     openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
 )
 
@@ -22,6 +23,7 @@ app.add_middleware(
 
 app.include_router(org_router, prefix=settings.API_V1_PREFIX)
 app.include_router(locks_router, prefix=settings.API_V1_PREFIX)
+app.include_router(constraints_router, prefix=settings.API_V1_PREFIX)
 app.include_router(solver_router, prefix=settings.API_V1_PREFIX)
 app.include_router(importer_router, prefix=settings.API_V1_PREFIX)
 
@@ -32,5 +34,5 @@ def health_check():
         "status": "ok",
         "service": settings.PROJECT_NAME,
         "mode": "multi-level-flexible",
-        "version": "0.6.0",
+        "milestone": "M2-complete",
     }
