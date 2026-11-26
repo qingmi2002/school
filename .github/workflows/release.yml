@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "发版版本号（例如 v1.0.0）"
+        description: "发版版本号（同时自动更新 :latest 供 Linux 与 NAS 一键拉取）"
         required: true
-        default: "v1.0.0"
+        default: "v1.0.1"
 
 permissions:
   contents: write
@@ -28,8 +28,9 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "TAG=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
           else
-            echo "TAG=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "TAG=${{ github.ref_NAME }}" >> "$GITHUB_OUTPUT"
           fi
+          echo "OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -38,14 +39,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & Push Backend Image
+      - name: Build & Push Backend Image (version + latest)
         run: |
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          docker build -f backend/Dockerfile.prod -t ghcr.io/${OWNER}/smart-schedule-backend:${{ steps.meta.outputs.TAG }} ./backend
-          docker push ghcr.io/${OWNER}/smart-schedule-backend:${{ steps.meta.outputs.TAG }}
+          BASE="ghcr.io/${{ steps.meta.outputs.OWNER }}/smart-schedule-backend"
+          docker build -f backend/Dockerfile.prod -t "${BASE}:${{ steps.meta.outputs.TAG }}" -t "${BASE}:latest" ./backend
+          docker push "${BASE}:${{ steps.meta.outputs.TAG }}"
+          docker push "${BASE}:latest"
 
-      - name: Build & Push Web Image
+      - name: Build & Push Web Image (version + latest)
         run: |
-          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          docker build -f frontend/Dockerfile.prod -t ghcr.io/${OWNER}/smart-schedule-web:${{ steps.meta.outputs.TAG }} ./frontend
-          docker push ghcr.io/${OWNER}/smart-schedule-web:${{ steps.meta.outputs.TAG }}
+          BASE="ghcr.io/${{ steps.meta.outputs.OWNER }}/smart-schedule-web"
+          docker build -f frontend/Dockerfile.prod -t "${BASE}:${{ steps.meta.outputs.TAG }}" -t "${BASE}:latest" ./frontend
+          docker push "${BASE}:${{ steps.meta.outputs.TAG }}"
+          docker push "${BASE}:latest"
