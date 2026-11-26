@@ -1,0 +1,92 @@
+# ==============================================================================
+# 高校分级智能排课系统（多级通用版）— NAS 极简一键部署模板
+# 适用平台：群晖 (Container Manager)、飞牛 OS (fnOS)、极空间、绿联、威联通、1Panel、Portainer
+#
+# 使用方法（30 秒搞定，无需 SSH、无需手动建 .env）：
+#   1. 先在 GitHub 仓库 Actions -> "Build & Publish Production Images" 点一次 Run workflow 生成镜像
+#      （并将 GHCR 镜像包可见性设为 Public，方便 NAS 零登录拉取）。
+#   2. 把下方两处 YOUR_GITHUB_USER 替换成你的 GitHub 用户名（全小写）。
+#   3. 在 NAS Docker Compose 界面新建项目，直接粘贴本文件全部内容，点击“构建/启动”即可！
+#   4. 浏览器打开 http://NAS的IP:8088 即可使用；排课归档文件自动保存在 ./cloud_archive 共享目录中。
+# ==============================================================================
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: smart_schedule_pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: smart_schedule
+      POSTGRES_USER: schedule_admin
+      POSTGRES_PASSWORD: SmartSchedule_ChangeMe_2026
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U schedule_admin -d smart_schedule"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    container_name: smart_schedule_redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  backend:
+    # 将 YOUR_GITHUB_USER 替换为你的 GitHub 用户名（全小写）
+    image: ghcr.io/YOUR_GITHUB_USER/smart-schedule-backend:latest
+    container_name: smart_schedule_backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://schedule_admin:SmartSchedule_ChangeMe_2026@postgres:5432/smart_schedule
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      ARCHIVE_LOCAL_ROOT: /mnt/cloud_drive/SmartSchedule_Archive
+      ARCHIVE_STAGING_DIR: /app/archive_staging
+    volumes:
+      - ./data/archive_staging:/app/archive_staging
+      - ./cloud_archive:/mnt/cloud_drive/SmartSchedule_Archive
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-worker:
+    # 将 YOUR_GITHUB_USER 替换为你的 GitHub 用户名（全小写）
+    image: ghcr.io/YOUR_GITHUB_USER/smart-schedule-backend:latest
+    container_name: smart_schedule_worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg2://schedule_admin:SmartSchedule_ChangeMe_2026@postgres:5432/smart_schedule
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      ARCHIVE_LOCAL_ROOT: /mnt/cloud_drive/SmartSchedule_Archive
+      ARCHIVE_STAGING_DIR: /app/archive_staging
+    volumes:
+      - ./data/archive_staging:/app/archive_staging
+      - ./cloud_archive:/mnt/cloud_drive/SmartSchedule_Archive
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.core.celery_app:celery_app worker --loglevel=info --concurrency=2
+
+  web:
+    # 将 YOUR_GITHUB_USER 替换为你的 GitHub 用户名（全小写）
+    image: ghcr.io/YOUR_GITHUB_USER/smart-schedule-web:latest
+    container_name: smart_schedule_web
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      # 默认映射 8088 端口，避免与 NAS 自身 80/5000 后台冲突；可按需修改左侧端口
+      - "8088:80"
