@@ -5,8 +5,77 @@ export const apiClient = axios.create({
   timeout: 15000,
 });
 
+apiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem("ss_token");
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
 export type ConstraintLevel = "HARD" | "SOFT";
 export type SharingPolicy = "EXCLUSIVE" | "IDLE_BORROW" | "PUBLIC_POOL";
+
+export interface UserProfile {
+  id: number;
+  username: string;
+  real_name: string;
+  role_code: string;
+  role_label: string;
+  org_node_id: number;
+  org_node_name: string;
+  tree_path: string;
+  cohort_id?: number | null;
+  cohort_name?: string | null;
+  permissions: string[];
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: string;
+  user: UserProfile;
+}
+
+export interface OrgNodeTreeItem {
+  id: number;
+  parent_id: number | null;
+  node_code: string;
+  node_name: string;
+  node_type_code: string;
+  tree_path: string;
+  depth: number;
+  is_scheduling_unit: boolean;
+  is_public_provider: boolean;
+  has_student_cohort: boolean;
+  has_room_pool: boolean;
+  is_campus_boundary: boolean;
+  is_summary_node: boolean;
+  allow_custom_timeslot: boolean;
+  resolved_campus_id?: number | null;
+  children: OrgNodeTreeItem[];
+}
+
+export interface PersonalCourseCard {
+  course_code: string;
+  course_name: string;
+  day_of_week: number;
+  period_index: number;
+  period_name: string;
+  room_code: string;
+  building: string;
+  teacher_name: string;
+  cohort_names: string[];
+  week_type: number;
+  is_public_lock: boolean;
+}
+
+export interface PersonalSchedule {
+  owner_type: string;
+  owner_name: string;
+  sub_title: string;
+  plan_id: number | null;
+  cards: PersonalCourseCard[];
+}
 
 export interface VersionInfo {
   current_version: string;
@@ -123,6 +192,41 @@ export interface HealthCheckReport {
   issues: HealthCheckIssue[];
 }
 
+export async function loginApi(username: string, password: string): Promise<LoginResponse> {
+  const { data } = await apiClient.post<LoginResponse>("/auth/login", { username, password });
+  return data;
+}
+
+export async function fetchMeApi(): Promise<UserProfile> {
+  const { data } = await apiClient.get<UserProfile>("/auth/me");
+  return data;
+}
+
+export async function seedDemoApi() {
+  const { data } = await apiClient.post("/auth/seed-demo");
+  return data;
+}
+
+export async function fetchScopedUsers(): Promise<UserProfile[]> {
+  const { data } = await apiClient.get<UserProfile[]>("/auth/users");
+  return data;
+}
+
+export async function fetchMySchedule(): Promise<PersonalSchedule> {
+  const { data } = await apiClient.get<PersonalSchedule>("/auth/my-schedule");
+  return data;
+}
+
+export async function fetchOrgTree(): Promise<OrgNodeTreeItem[]> {
+  const { data } = await apiClient.get<OrgNodeTreeItem[]>("/org/tree");
+  return data;
+}
+
+export async function updateOrgNodeFlags(nodeId: number, flags: Record<string, boolean>) {
+  const { data } = await apiClient.patch(`/org/nodes/${nodeId}/flags`, flags);
+  return data;
+}
+
 export async function fetchSystemVersion(force = false): Promise<VersionInfo> {
   const { data } = await apiClient.get<VersionInfo>("/system/version", { params: { force } });
   return data;
@@ -207,6 +311,13 @@ export async function runHealthCheck(
 ): Promise<HealthCheckReport> {
   const { data } = await apiClient.get<HealthCheckReport>("/validator/health-check", {
     params: { semester_id: semesterId, scope },
+  });
+  return data;
+}
+
+export async function triggerArchivePlan(planId: number, vendor: string) {
+  const { data } = await apiClient.post(`/export/plans/${planId}/archive`, null, {
+    params: { vendor },
   });
   return data;
 }
