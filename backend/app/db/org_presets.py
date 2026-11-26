@@ -1,6 +1,5 @@
 """
-6 类高校组织架构 + 单院系独立轻量化模式 JSON 预设库
-用于 T2.1 一键初始化 org_node 与 node_type，并在 T1.2 阶段提供数据底座验证。
+高校多级组织架构字典与预设库（已补充 MAJOR 专业级节点，完整覆盖 校 -> 院 -> 系 -> 专业 四级权限）。
 """
 
 NODE_TYPE_DICTIONARY = [
@@ -10,8 +9,9 @@ NODE_TYPE_DICTIONARY = [
     {"code": "ACADEMY", "name": "书院", "sort_order": 4, "default_flags": {"has_student_cohort": True}},
     {"code": "COLLEGE", "name": "二级学院", "sort_order": 5, "default_flags": {"is_summary_node": True, "has_room_pool": True}},
     {"code": "DEPT", "name": "教学系", "sort_order": 6, "default_flags": {"is_scheduling_unit": True, "has_student_cohort": True, "has_room_pool": True}},
-    {"code": "PUBLIC_DEPT", "name": "公共教学部", "sort_order": 7, "default_flags": {"is_public_provider": True, "is_scheduling_unit": True}},
-    {"code": "TRAINING_CENTER", "name": "实训中心", "sort_order": 8, "default_flags": {"has_room_pool": True}},
+    {"code": "MAJOR", "name": "专业", "sort_order": 7, "default_flags": {"is_scheduling_unit": True, "has_student_cohort": True}},
+    {"code": "PUBLIC_DEPT", "name": "公共教学部", "sort_order": 8, "default_flags": {"is_public_provider": True, "is_scheduling_unit": True}},
+    {"code": "TRAINING_CENTER", "name": "实训中心", "sort_order": 9, "default_flags": {"has_room_pool": True}},
 ]
 
 ORG_ARCHETYPE_PRESETS = {
@@ -23,12 +23,14 @@ ORG_ARCHETYPE_PRESETS = {
         ],
     },
     "school_college_dept": {
-        "name": "校—院—系三级制",
-        "description": "传统本科高校架构：系部独立排课，学院汇总进度并共享院级机房，学校统筹公共课。",
+        "name": "校—院—系—专业四级制",
+        "description": "完整高校分级体制：校级统筹公共课，院级汇总，系级/专业级排课员分级自治。",
         "nodes": [
             {"code": "UNIV", "name": "示范大学", "type": "SCHOOL", "parent": None, "flags": {"is_public_provider": True, "has_room_pool": True, "is_summary_node": True, "is_campus_boundary": True}},
             {"code": "INFO_COL", "name": "信息工程学院", "type": "COLLEGE", "parent": "UNIV", "flags": {"has_room_pool": True, "is_summary_node": True}},
             {"code": "CS_DEPT", "name": "计算机系", "type": "DEPT", "parent": "INFO_COL", "flags": {"is_scheduling_unit": True, "has_student_cohort": True, "has_room_pool": True}},
+            {"code": "SE_MAJOR", "name": "软件工程专业", "type": "MAJOR", "parent": "CS_DEPT", "flags": {"is_scheduling_unit": True, "has_student_cohort": True}},
+            {"code": "AI_MAJOR", "name": "人工智能专业", "type": "MAJOR", "parent": "CS_DEPT", "flags": {"is_scheduling_unit": True, "has_student_cohort": True}},
         ],
     },
     "school_college_flat": {
@@ -79,7 +81,6 @@ ORG_ARCHETYPE_PRESETS = {
 
 
 def resolve_campus_boundary_id(node_by_id: dict, start_node_id: int) -> int | None:
-    """沿 org_node.parent_id 向上溯源物理校区边界，彻底消除手填 campus_code 漏洞。"""
     current = node_by_id.get(start_node_id)
     visited = set()
     while current is not None and current.id not in visited:

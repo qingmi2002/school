@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.api.auth import router as auth_router
 from app.api.constraints import router as constraints_router
 from app.api.exporter import router as exporter_router
 from app.api.importer import router as importer_router
@@ -25,6 +26,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router, prefix=settings.API_V1_PREFIX)
 app.include_router(system_router, prefix=settings.API_V1_PREFIX)
 app.include_router(org_router, prefix=settings.API_V1_PREFIX)
 app.include_router(locks_router, prefix=settings.API_V1_PREFIX)
