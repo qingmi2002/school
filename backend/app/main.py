@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.constraints import router as constraints_router
+from app.api.exporter import router as exporter_router
 from app.api.importer import router as importer_router
 from app.api.locks import router as locks_router
 from app.api.org import router as org_router
@@ -11,7 +12,7 @@ from app.core.config import settings
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    version="0.9.0",
+    version="0.9.5",
     openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
 )
 
@@ -30,6 +31,7 @@ app.include_router(solver_router, prefix=settings.API_V1_PREFIX)
 app.include_router(importer_router, prefix=settings.API_V1_PREFIX)
 app.include_router(validator_router, prefix=settings.API_V1_PREFIX)
 app.include_router(workbench_router, prefix=settings.API_V1_PREFIX)
+app.include_router(exporter_router, prefix=settings.API_V1_PREFIX)
 
 
 @app.get("/health", tags=["system"])
@@ -38,5 +40,5 @@ def health_check():
         "status": "ok",
         "service": settings.PROJECT_NAME,
         "mode": "multi-level-flexible",
-        "milestone": "M3-complete",
+        "version": "0.9.5",
     }
