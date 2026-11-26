@@ -3,29 +3,20 @@ set -euo pipefail
 
 # ==============================================================================
 # 高校分级智能排课系统（多级通用版）Linux 全自动一键拉取安装脚本
-# 用法：
-#   curl -fsSL https://raw.githubusercontent.com/<你的GitHub用户名>/<仓库名>/main/install.sh | sudo REPO_OWNER=<你的GitHub用户名> REPO_NAME=<仓库名> bash
+# 开箱即用命令：
+#   curl -fsSL https://raw.githubusercontent.com/qingmi2002/school/main/install.sh | sudo bash
 # 可选环境变量：
 #   INSTALL_DIR=/opt/smart-schedule   安装目录
 #   APP_PORT=80                       对外端口（若80被占自动切换为8088）
 #   USE_PREBUILT=auto                 auto(优先拉GHCR镜像，失败自动本地构建) / true / false
 # ==============================================================================
 
-REPO_OWNER="${REPO_OWNER:-}"
+REPO_OWNER="${REPO_OWNER:-qingmi2002}"
 REPO_NAME="${REPO_NAME:-school}"
 BRANCH="${BRANCH:-main}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/smart-schedule}"
 APP_PORT="${APP_PORT:-}"
 USE_PREBUILT="${USE_PREBUILT:-auto}"
-
-if [[ -z "$REPO_OWNER" ]]; then
-  echo "================================================================"
-  echo "[提示] 未指定 GitHub 用户名 (REPO_OWNER)。"
-  echo "请用如下命令运行（把 YOUR_NAME 替换成你的 GitHub 用户名）："
-  echo "  curl -fsSL https://raw.githubusercontent.com/YOUR_NAME/${REPO_NAME}/main/install.sh | sudo REPO_OWNER=YOUR_NAME bash"
-  echo "================================================================"
-  exit 1
-fi
 
 OWNER_LOWER="$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')"
 REPO_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}.git"

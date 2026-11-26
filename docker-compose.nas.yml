@@ -1,13 +1,13 @@
 # ==============================================================================
-# 高校分级智能排课系统（多级通用版）— NAS 极简一键部署模板
+# 高校分级智能排课系统（多级通用版）— NAS 极简一键部署模板（已预填 qingmi2002）
 # 适用平台：群晖 (Container Manager)、飞牛 OS (fnOS)、极空间、绿联、威联通、1Panel、Portainer
 #
-# 使用方法（30 秒搞定，无需 SSH、无需手动建 .env）：
-#   1. 先在 GitHub 仓库 Actions -> "Build & Publish Production Images" 点一次 Run workflow 生成镜像
-#      （并将 GHCR 镜像包可见性设为 Public，方便 NAS 零登录拉取）。
-#   2. 把下方两处 YOUR_GITHUB_USER 替换成你的 GitHub 用户名（全小写）。
-#   3. 在 NAS Docker Compose 界面新建项目，直接粘贴本文件全部内容，点击“构建/启动”即可！
-#   4. 浏览器打开 http://NAS的IP:8088 即可使用；排课归档文件自动保存在 ./cloud_archive 共享目录中。
+# 使用方法（零修改直接粘贴）：
+#   1. 先在 https://github.com/qingmi2002/school/actions 点一次
+#      "Build & Publish Production Images" -> Run workflow 生成 :latest 镜像，
+#      并在 GitHub Packages 中将两个镜像设为 Public。
+#   2. 在 NAS Docker Compose 新建项目，直接全文粘贴本文件，点击“启动”即可！
+#   3. 访问 http://NAS的IP:8088 即可使用；排课归档自动保存在 ./cloud_archive 目录。
 # ==============================================================================
 
 services:
@@ -38,8 +38,7 @@ services:
       retries: 15
 
   backend:
-    # 将 YOUR_GITHUB_USER 替换为你的 GitHub 用户名（全小写）
-    image: ghcr.io/YOUR_GITHUB_USER/smart-schedule-backend:latest
+    image: ghcr.io/qingmi2002/smart-schedule-backend:latest
     container_name: smart_schedule_backend
     restart: unless-stopped
     environment:
@@ -59,8 +58,7 @@ services:
         condition: service_healthy
 
   celery-worker:
-    # 将 YOUR_GITHUB_USER 替换为你的 GitHub 用户名（全小写）
-    image: ghcr.io/YOUR_GITHUB_USER/smart-schedule-backend:latest
+    image: ghcr.io/qingmi2002/smart-schedule-backend:latest
     container_name: smart_schedule_worker
     restart: unless-stopped
     environment:
@@ -81,12 +79,10 @@ services:
     command: celery -A app.core.celery_app:celery_app worker --loglevel=info --concurrency=2
 
   web:
-    # 将 YOUR_GITHUB_USER 替换为你的 GitHub 用户名（全小写）
-    image: ghcr.io/YOUR_GITHUB_USER/smart-schedule-web:latest
+    image: ghcr.io/qingmi2002/smart-schedule-web:latest
     container_name: smart_schedule_web
     restart: unless-stopped
     depends_on:
       - backend
     ports:
-      # 默认映射 8088 端口，避免与 NAS 自身 80/5000 后台冲突；可按需修改左侧端口
       - "8088:80"
