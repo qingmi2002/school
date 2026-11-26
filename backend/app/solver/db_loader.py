@@ -1,15 +1,15 @@
-"""从 PostgreSQL 16 张核心表加载 SolverInput，并将求解结果落库为新版本方案。"""
+"""从 PostgreSQL 16 张核心表加载 SolverInput（已集成 T2.2 分级基线锁定作用域），并将求解结果落库。"""
 from datetime import datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.db.org_presets import resolve_campus_boundary_id
+from app.locks.service import get_effective_locks_for_node
 from app.models import (
     Classroom,
     OrgNode,
     OrgResourceGrant,
-    PublicCourseLock,
     RoomCourseRule,
     ScheduleDetail,
     SchedulePlan,
@@ -76,8 +76,13 @@ def load_solver_input_from_db(
         task_q = task_q.filter(TeachingTask.org_node_id == org_node_id)
     task_rows = task_q.all()
 
-    # 4. 分级基线锁定、教师禁排与机房黑白名单
-    lock_rows = db.query(PublicCourseLock).filter(PublicCourseLock.semester_id == semester_id).all()
+    # 4. T2.2 分级基线锁定（按组织树作用域自动向上继承，单院系模式无校级锁时自然为空）
+    effective_locks = get_effective_locks_for_node(
+        db=db,
+        semester_id=semester_id,
+        target_org_node_id=org_node_id if run_mode == "SINGLE_DEPT" else None,
+    )
+
     unavail_rows = db.query(TeacherUnavailable).filter(TeacherUnavailable.semester_id == semester_id).all()
     room_ids = {r.id for r in room_rows}
     rule_rows = (
@@ -136,7 +141,7 @@ def load_solver_input_from_db(
                 teacher_id=l.teacher_id,
                 course_name=l.course_name,
             )
-            for l in lock_rows
+            for l in effective_locks.locks
         ],
         teacher_unavailable=[
             SolverTeacherUnavailable(
