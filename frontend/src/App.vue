@@ -2,7 +2,6 @@
   <LoginView v-if="!currentUser" @logged-in="onLoggedIn" />
 
   <el-container v-else class="erp-shell">
-    <!-- 传统教务软件标准顶部通栏（48px 紧凑型） -->
     <el-header height="48px" class="erp-header">
       <div class="h-left">
         <span class="sys-name">{{ siteName }}</span>
@@ -13,7 +12,7 @@
       <div class="h-right">
         <el-badge :is-dot="Boolean(versionInfo?.has_update)">
           <el-button size="small" link style="color: #e2e8f0" @click="upgradeDialogVisible = true">
-            {{ versionInfo?.has_update ? `新版本 ${versionInfo.latest_version}` : (versionInfo?.current_version || "v1.2.0") }}
+            {{ versionInfo?.has_update ? `新版本 ${versionInfo.latest_version}` : (versionInfo?.current_version || "v1.3.0") }}
           </el-button>
         </el-badge>
         <span class="user-info">{{ currentUser.real_name }}（{{ currentUser.role_label }}）</span>
@@ -22,13 +21,8 @@
     </el-header>
 
     <el-container class="erp-body">
-      <!-- 左侧紧凑导航（210px：极简关键字菜单 + 组织树） -->
       <el-aside width="210px" class="erp-aside">
-        <el-menu
-          :default-active="activeMenu"
-          class="erp-menu"
-          @select="(idx: string) => (activeMenu = idx)"
-        >
+        <el-menu :default-active="activeMenu" class="erp-menu" @select="(idx: string) => (activeMenu = idx)">
           <template v-if="isAdminRole">
             <el-menu-item index="workbench">排课工作台</el-menu-item>
             <el-menu-item index="resources">基础数据</el-menu-item>
@@ -60,7 +54,6 @@
         </div>
       </el-aside>
 
-      <!-- 右侧标准业务内容区 -->
       <el-main class="erp-main">
         <ScheduleWorkbench v-if="activeMenu === 'workbench'" />
         <ResourceManageView v-else-if="activeMenu === 'resources'" :active-org-id="selectedNode?.id || currentUser.org_node_id" />
@@ -69,9 +62,10 @@
           v-else-if="activeMenu === 'org'"
           :selected-node="selectedNode"
           :can-edit="currentUser.role_code === 'SUPER_ADMIN'"
+          @tree-changed="reloadOrgTree"
         />
         <RoomRuleManager v-else-if="activeMenu === 'rooms'" />
-        <ArchiveExportView v-else-if="activeMenu === 'export'" />
+        <ArchiveExportView v-else-if="activeMenu === 'export'" @data-imported="reloadOrgTree" />
         <SystemSettingView v-else-if="activeMenu === 'settings'" @updated="(n: string) => (siteName = n)" />
         <TeacherUnavailableGrid v-else-if="activeMenu === 'teacher-grid'" />
         <PersonalScheduleView v-else-if="activeMenu === 'my-schedule'" />
@@ -132,17 +126,21 @@ const isAdminRole = computed(() => {
   return r === "SUPER_ADMIN" || r.includes("SCHEDULER") || r === "LAB_ADMIN";
 });
 
+async function reloadOrgTree(): Promise<void> {
+  try {
+    const tree = await fetchOrgTree();
+    orgTree.value = tree;
+    if (tree[0] && !selectedNode.value) selectedNode.value = tree[0];
+  } catch {
+    orgTree.value = [];
+  }
+}
+
 async function initAfterLogin(user: UserProfile): Promise<void> {
   currentUser.value = user;
   activeMenu.value = isAdminRole.value ? "workbench" : "my-schedule";
   if (isAdminRole.value) {
-    try {
-      const tree = await fetchOrgTree();
-      orgTree.value = tree;
-      if (tree[0]) selectedNode.value = tree[0];
-    } catch {
-      orgTree.value = [];
-    }
+    await reloadOrgTree();
   }
   void checkUpdate(false);
 }
@@ -191,34 +189,17 @@ body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "P
 
 <style scoped>
 .erp-shell { min-height: 100vh; display: flex; flex-direction: column; }
-.erp-header {
-  background: #1e3a5f;
-  color: #ffffff;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
-}
+.erp-header { background: #1e3a5f; color: #ffffff; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; }
 .h-left, .h-right { display: flex; align-items: center; gap: 10px; font-size: 13px; }
 .sys-name { font-size: 15px; font-weight: 600; }
 .divider { opacity: 0.4; }
 .node-tag { font-size: 12px; color: #bfdbfe; }
 .user-info { font-size: 12px; color: #e2e8f0; }
 .erp-body { flex: 1; }
-.erp-aside {
-  background: #ffffff;
-  border-right: 1px solid #dcdfe6;
-  display: flex;
-  flex-direction: column;
-}
+.erp-aside { background: #ffffff; border-right: 1px solid #dcdfe6; display: flex; flex-direction: column; }
 .erp-menu { border-right: none; }
 :deep(.erp-menu .el-menu-item) { height: 40px; line-height: 40px; font-size: 13px; }
-.tree-panel {
-  border-top: 1px solid #ebeef5;
-  padding: 10px 8px;
-  flex: 1;
-  overflow-y: auto;
-}
+.tree-panel { border-top: 1px solid #ebeef5; padding: 10px 8px; flex: 1; overflow-y: auto; }
 .tree-title { font-size: 12px; font-weight: 600; color: #606266; padding: 0 8px 6px; }
 .erp-main { padding: 12px; background: #f0f2f5; }
 </style>

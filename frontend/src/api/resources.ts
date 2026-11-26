@@ -16,6 +16,15 @@ export interface SemesterItem {
   is_current: boolean;
 }
 
+export interface BuildingItem {
+  id: number;
+  building_code: string;
+  building_name: string;
+  campus_org_id: number;
+  floors: number;
+  remark?: string | null;
+}
+
 export interface TeacherItem {
   id: number;
   username: string;
@@ -44,6 +53,7 @@ export interface ClassroomItem {
   id: number;
   room_code: string;
   building: string;
+  building_id?: number | null;
   owner_org_id: number;
   capacity: number;
   room_type: string;
@@ -65,12 +75,30 @@ export interface PolicyRuleItem {
   remark?: string | null;
 }
 
+export interface MasterImportReport {
+  status: string;
+  total_inserted: number;
+  total_updated: number;
+  total_errors: number;
+  sheets: Record<string, { inserted: number; updated: number; errors: string[] }>;
+}
+
 export const getSiteConfig = async () => (await apiClient.get<SiteConfig>("/resources/site-config")).data;
 export const saveSiteConfig = async (p: SiteConfig) => (await apiClient.put<SiteConfig>("/resources/site-config", p)).data;
 
 export const getSemesters = async () => (await apiClient.get<SemesterItem[]>("/resources/semesters")).data;
 export const addSemester = async (p: Omit<SemesterItem, "id">) => (await apiClient.post<SemesterItem>("/resources/semesters", p)).data;
 export const setCurrentSemester = async (id: number) => (await apiClient.patch(`/resources/semesters/${id}/set-current`)).data;
+
+export const getBuildings = async () => (await apiClient.get<BuildingItem[]>("/resources/buildings")).data;
+export const addBuilding = async (p: Omit<BuildingItem, "id">) => (await apiClient.post<BuildingItem>("/resources/buildings", p)).data;
+export const deleteBuilding = async (id: number) => apiClient.delete(`/resources/buildings/${id}`);
+
+export const createOrgNodeApi = async (p: { parent_id: number | null; node_code: string; node_name: string; node_type_code: string }) =>
+  (await apiClient.post("/org/nodes", p)).data;
+export const renameOrgNodeApi = async (id: number, node_name: string) =>
+  (await apiClient.patch(`/org/nodes/${id}`, { node_name })).data;
+export const deleteOrgNodeApi = async (id: number) => apiClient.delete(`/org/nodes/${id}`);
 
 export const getTeachers = async () => (await apiClient.get<TeacherItem[]>("/resources/teachers")).data;
 export const addTeacher = async (p: { username: string; real_name: string; org_node_id: number }) => (await apiClient.post<TeacherItem>("/resources/teachers", p)).data;
@@ -95,3 +123,10 @@ export const getPolicyRules = async (semesterId?: number) =>
 export const addPolicyRule = async (p: Omit<PolicyRuleItem, "id" | "is_active">) =>
   (await apiClient.post<PolicyRuleItem>("/resources/policy-rules", p)).data;
 export const deletePolicyRule = async (id: number) => apiClient.delete(`/resources/policy-rules/${id}`);
+
+export const uploadMasterImport = async (file: File): Promise<MasterImportReport> => {
+  const fd = new FormData();
+  fd.append("file", file);
+  const { data } = await apiClient.post<MasterImportReport>("/resources/master-import/upload", fd);
+  return data;
+};
