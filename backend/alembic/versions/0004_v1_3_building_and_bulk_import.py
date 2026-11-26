@@ -1,6 +1,6 @@
 """v1.3 add independent building table and classroom.building_id
 
-Revision ID: 0004_v1_3_building_and_bulk_import
+Revision ID: 0004_v1_3_building
 Revises: 0003_v1_2_config_rules_and_rooms
 Create Date: 2026-11-26 15:35:00
 """
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from app.db.session import Base
 import app.models  # noqa: F401
 
-revision = "0004_v1_3_building_and_bulk_import"
+revision = "0004_v1_3_building"
 down_revision = "0003_v1_2_config_rules_and_rooms"
 branch_labels = None
 depends_on = None
