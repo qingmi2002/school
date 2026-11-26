@@ -1,19 +1,23 @@
 """
-V1.2 高内聚动态资源管理与自定义排课规则中心 API：
-- 系统自定义配置（系统名称、正式版隐藏体验账号）
-- 排课大周期管理（学期起止日期、周数、切换当前学期）
-- 教师 / 学生 / 班级 / 教室（固定 FIXED 与 流动 FLOATING）全动态数据库 CRUD
-- 统一自定义规则引擎（针对全局/单教师/单班级/单教室设置必排/禁排/优先时段，如每天 1-2 节必排）
+V1.3 高内聚动态资源管理与集中导入中心 API：
+- 系统自定义配置、排课大周期（学期）
+- 教学楼（独立表）、教室（固定/流动）、班级、教师、学生全动态数据库 CRUD
+- 6-Sheet 基础数据集中导入模板下载与批量幂等入库
+- 统一自定义排课规则引擎
 """
 from typing import List, Literal, Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth.security import hash_password
 from app.db.session import get_db
+from app.importer.master_data_importer import build_master_data_template, import_master_data_workbook
 from app.models import (
+    Building,
     Classroom,
     SchedulePolicyRule,
     Semester,
@@ -25,7 +29,7 @@ from app.models import (
 router = APIRouter(prefix="/resources", tags=["resources-and-rules"])
 
 
-# ---------- 1. 系统配置（自定义系统名 & 体验账号开关） ----------
+# ---------- 1. 系统配置 ----------
 class SiteConfigDTO(BaseModel):
     site_name: str = "智能排课系统"
     site_subtitle: str = "面向高校与院系的专业分级排课管理平台"
@@ -52,7 +56,7 @@ def update_site_config(payload: SiteConfigDTO, db: Session = Depends(get_db)):
     return payload
 
 
-# ---------- 2. 排课大时间周期（学期管理） ----------
+# ---------- 2. 排课大周期（学期） ----------
 class SemesterCreate(BaseModel):
     code: str
     name: str
@@ -69,18 +73,7 @@ class SemesterOut(SemesterCreate):
 @router.get("/semesters", response_model=List[SemesterOut])
 def list_semesters(db: Session = Depends(get_db)):
     rows = db.query(Semester).order_by(Semester.is_current.desc(), Semester.id.desc()).all()
-    return [
-        SemesterOut(
-            id=r.id,
-            code=r.code,
-            name=r.name,
-            total_weeks=r.total_weeks,
-            start_date=r.start_date,
-            end_date=r.end_date,
-            is_current=r.is_current,
-        )
-        for r in rows
-    ]
+    return [SemesterOut(id=r.id, code=r.code, name=r.name, total_weeks=r.total_weeks, start_date=r.start_date, end_date=r.end_date, is_current=r.is_current) for r in rows]
 
 
 @router.post("/semesters", response_model=SemesterOut)
@@ -91,15 +84,7 @@ def create_semester(payload: SemesterCreate, db: Session = Depends(get_db)):
     db.add(row)
     db.commit()
     db.refresh(row)
-    return SemesterOut(
-        id=row.id,
-        code=row.code,
-        name=row.name,
-        total_weeks=row.total_weeks,
-        start_date=row.start_date,
-        end_date=row.end_date,
-        is_current=row.is_current,
-    )
+    return SemesterOut(id=row.id, code=row.code, name=row.name, total_weeks=row.total_weeks, start_date=row.start_date, end_date=row.end_date, is_current=row.is_current)
 
 
 @router.patch("/semesters/{sem_id}/set-current")
@@ -113,7 +98,45 @@ def set_current_semester(sem_id: int, db: Session = Depends(get_db)):
     return {"current_semester_id": sem_id}
 
 
-# ---------- 3. 教师管理 ----------
+# ---------- 3. 教学楼管理（独立数据库表） ----------
+class BuildingCreate(BaseModel):
+    building_code: str
+    building_name: str
+    campus_org_id: int
+    floors: int = 5
+    remark: Optional[str] = None
+
+
+class BuildingOut(BuildingCreate):
+    id: int
+
+
+@router.get("/buildings", response_model=List[BuildingOut])
+def list_buildings(db: Session = Depends(get_db)):
+    rows = db.query(Building).filter(Building.is_active.is_(True)).order_by(Building.building_code).all()
+    return [BuildingOut(id=b.id, building_code=b.building_code, building_name=b.building_name, campus_org_id=b.campus_org_id, floors=b.floors, remark=b.remark) for b in rows]
+
+
+@router.post("/buildings", response_model=BuildingOut)
+def create_building(payload: BuildingCreate, db: Session = Depends(get_db)):
+    b = Building(**payload.model_dump())
+    db.add(b)
+    db.commit()
+    db.refresh(b)
+    return BuildingOut(id=b.id, building_code=b.building_code, building_name=b.building_name, campus_org_id=b.campus_org_id, floors=b.floors, remark=b.remark)
+
+
+@router.delete("/buildings/{building_id}")
+def delete_building(building_id: int, db: Session = Depends(get_db)):
+    b = db.query(Building).filter(Building.id == building_id).first()
+    if b is None:
+        raise HTTPException(status_code=404, detail="教学楼不存在")
+    b.is_active = False
+    db.commit()
+    return {"deleted_id": building_id}
+
+
+# ---------- 4. 教师管理 ----------
 class TeacherCreate(BaseModel):
     username: str
     real_name: str
@@ -138,13 +161,7 @@ def list_teachers(org_node_id: Optional[int] = Query(None), db: Session = Depend
 
 @router.post("/teachers", response_model=TeacherOut)
 def create_teacher(payload: TeacherCreate, db: Session = Depends(get_db)):
-    u = SysUser(
-        username=payload.username,
-        real_name=payload.real_name,
-        org_node_id=payload.org_node_id,
-        role_code="TEACHER",
-        password_hash=hash_password(payload.password),
-    )
+    u = SysUser(username=payload.username, real_name=payload.real_name, org_node_id=payload.org_node_id, role_code="TEACHER", password_hash=hash_password(payload.password))
     db.add(u)
     db.commit()
     db.refresh(u)
@@ -161,7 +178,7 @@ def delete_teacher(teacher_id: int, db: Session = Depends(get_db)):
     return {"deleted_id": teacher_id}
 
 
-# ---------- 4. 班级管理 ----------
+# ---------- 5. 班级管理 ----------
 class CohortCreate(BaseModel):
     cohort_code: str
     cohort_name: str
@@ -179,17 +196,7 @@ def list_cohorts(org_node_id: Optional[int] = Query(None), db: Session = Depends
     q = db.query(StudentCohort)
     if org_node_id is not None:
         q = q.filter(StudentCohort.org_node_id == org_node_id)
-    return [
-        CohortOut(
-            id=c.id,
-            cohort_code=c.cohort_code,
-            cohort_name=c.cohort_name,
-            org_node_id=c.org_node_id,
-            grade_year=c.grade_year,
-            student_count=c.student_count,
-        )
-        for c in q.order_by(StudentCohort.id).all()
-    ]
+    return [CohortOut(id=c.id, cohort_code=c.cohort_code, cohort_name=c.cohort_name, org_node_id=c.org_node_id, grade_year=c.grade_year, student_count=c.student_count) for c in q.order_by(StudentCohort.id).all()]
 
 
 @router.post("/cohorts", response_model=CohortOut)
@@ -198,14 +205,7 @@ def create_cohort(payload: CohortCreate, db: Session = Depends(get_db)):
     db.add(c)
     db.commit()
     db.refresh(c)
-    return CohortOut(
-        id=c.id,
-        cohort_code=c.cohort_code,
-        cohort_name=c.cohort_name,
-        org_node_id=c.org_node_id,
-        grade_year=c.grade_year,
-        student_count=c.student_count,
-    )
+    return CohortOut(id=c.id, cohort_code=c.cohort_code, cohort_name=c.cohort_name, org_node_id=c.org_node_id, grade_year=c.grade_year, student_count=c.student_count)
 
 
 @router.delete("/cohorts/{cohort_id}")
@@ -218,7 +218,7 @@ def delete_cohort(cohort_id: int, db: Session = Depends(get_db)):
     return {"deleted_id": cohort_id}
 
 
-# ---------- 5. 学生管理 ----------
+# ---------- 6. 学生管理 ----------
 class StudentCreate(BaseModel):
     username: str
     real_name: str
@@ -240,22 +240,12 @@ def list_students(cohort_id: Optional[int] = Query(None), db: Session = Depends(
     q = db.query(SysUser).filter(SysUser.role_code == "STUDENT", SysUser.is_active.is_(True))
     if cohort_id is not None:
         q = q.filter(SysUser.cohort_id == cohort_id)
-    return [
-        StudentOut(id=u.id, username=u.username, real_name=u.real_name, org_node_id=u.org_node_id, cohort_id=u.cohort_id)
-        for u in q.order_by(SysUser.id).all()
-    ]
+    return [StudentOut(id=u.id, username=u.username, real_name=u.real_name, org_node_id=u.org_node_id, cohort_id=u.cohort_id) for u in q.order_by(SysUser.id).all()]
 
 
 @router.post("/students", response_model=StudentOut)
 def create_student(payload: StudentCreate, db: Session = Depends(get_db)):
-    u = SysUser(
-        username=payload.username,
-        real_name=payload.real_name,
-        org_node_id=payload.org_node_id,
-        cohort_id=payload.cohort_id,
-        role_code="STUDENT",
-        password_hash=hash_password(payload.password),
-    )
+    u = SysUser(username=payload.username, real_name=payload.real_name, org_node_id=payload.org_node_id, cohort_id=payload.cohort_id, role_code="STUDENT", password_hash=hash_password(payload.password))
     db.add(u)
     db.commit()
     db.refresh(u)
@@ -272,10 +262,11 @@ def delete_student(student_id: int, db: Session = Depends(get_db)):
     return {"deleted_id": student_id}
 
 
-# ---------- 6. 教室管理（固定 FIXED / 流动 FLOATING） ----------
+# ---------- 7. 教室管理（关联教学楼 + 固定/流动） ----------
 class ClassroomCreate(BaseModel):
     room_code: str
     building: str
+    building_id: Optional[int] = None
     owner_org_id: int
     capacity: int = 60
     room_type: Literal["NORMAL", "COMPUTER_LAB", "NETWORK_LAB", "TRAINING_ROOM", "SPORTS"] = "NORMAL"
@@ -296,16 +287,10 @@ def list_classrooms(usage_mode: Optional[str] = Query(None), db: Session = Depen
         q = q.filter(Classroom.usage_mode == usage_mode)
     return [
         ClassroomOut(
-            id=r.id,
-            room_code=r.room_code,
-            building=r.building,
-            owner_org_id=r.owner_org_id,
-            capacity=r.capacity,
-            room_type=r.room_type,
-            usage_mode=r.usage_mode,
-            fixed_cohort_id=r.fixed_cohort_id,
-            sharing_policy=r.sharing_policy,
-            env_tags=list(r.env_tags or []),
+            id=r.id, room_code=r.room_code, building=r.building, building_id=r.building_id,
+            owner_org_id=r.owner_org_id, capacity=r.capacity, room_type=r.room_type,
+            usage_mode=r.usage_mode, fixed_cohort_id=r.fixed_cohort_id,
+            sharing_policy=r.sharing_policy, env_tags=list(r.env_tags or []),
         )
         for r in q.order_by(Classroom.room_code).all()
     ]
@@ -313,21 +298,20 @@ def list_classrooms(usage_mode: Optional[str] = Query(None), db: Session = Depen
 
 @router.post("/classrooms", response_model=ClassroomOut)
 def create_classroom(payload: ClassroomCreate, db: Session = Depends(get_db)):
-    r = Classroom(**payload.model_dump())
+    data = payload.model_dump()
+    if data.get("building_id"):
+        b = db.query(Building).filter(Building.id == data["building_id"]).first()
+        if b:
+            data["building"] = b.building_name
+    r = Classroom(**data)
     db.add(r)
     db.commit()
     db.refresh(r)
     return ClassroomOut(
-        id=r.id,
-        room_code=r.room_code,
-        building=r.building,
-        owner_org_id=r.owner_org_id,
-        capacity=r.capacity,
-        room_type=r.room_type,
-        usage_mode=r.usage_mode,
-        fixed_cohort_id=r.fixed_cohort_id,
-        sharing_policy=r.sharing_policy,
-        env_tags=list(r.env_tags or []),
+        id=r.id, room_code=r.room_code, building=r.building, building_id=r.building_id,
+        owner_org_id=r.owner_org_id, capacity=r.capacity, room_type=r.room_type,
+        usage_mode=r.usage_mode, fixed_cohort_id=r.fixed_cohort_id,
+        sharing_policy=r.sharing_policy, env_tags=list(r.env_tags or []),
     )
 
 
@@ -357,14 +341,14 @@ def delete_classroom(room_id: int, db: Session = Depends(get_db)):
     return {"deleted_id": room_id}
 
 
-# ---------- 7. 高内聚统一排课策略规则（必排/禁排/优先，支持全局与单实体） ----------
+# ---------- 8. 统一自定义排课规则 ----------
 class PolicyRuleCreate(BaseModel):
     semester_id: int
     target_type: Literal["GLOBAL", "TEACHER", "COHORT", "CLASSROOM"] = "GLOBAL"
     target_id: Optional[int] = None
     rule_type: Literal["MUST_SCHEDULE", "FORBID_SCHEDULE", "PREFER_SCHEDULE"] = "MUST_SCHEDULE"
-    day_of_week: int = 0  # 0=每天, 1..7=周一至周日
-    period_index: int = 1  # 1=(1-2节)
+    day_of_week: int = 0
+    period_index: int = 1
     remark: Optional[str] = None
 
 
@@ -374,28 +358,14 @@ class PolicyRuleOut(PolicyRuleCreate):
 
 
 @router.get("/policy-rules", response_model=List[PolicyRuleOut])
-def list_policy_rules(
-    semester_id: Optional[int] = Query(None),
-    target_type: Optional[str] = Query(None),
-    db: Session = Depends(get_db),
-):
+def list_policy_rules(semester_id: Optional[int] = Query(None), target_type: Optional[str] = Query(None), db: Session = Depends(get_db)):
     q = db.query(SchedulePolicyRule).filter(SchedulePolicyRule.is_active.is_(True))
     if semester_id is not None:
         q = q.filter(SchedulePolicyRule.semester_id == semester_id)
     if target_type:
         q = q.filter(SchedulePolicyRule.target_type == target_type)
     return [
-        PolicyRuleOut(
-            id=r.id,
-            semester_id=r.semester_id,
-            target_type=r.target_type,
-            target_id=r.target_id,
-            rule_type=r.rule_type,
-            day_of_week=r.day_of_week,
-            period_index=r.period_index,
-            is_active=r.is_active,
-            remark=r.remark,
-        )
+        PolicyRuleOut(id=r.id, semester_id=r.semester_id, target_type=r.target_type, target_id=r.target_id, rule_type=r.rule_type, day_of_week=r.day_of_week, period_index=r.period_index, is_active=r.is_active, remark=r.remark)
         for r in q.order_by(SchedulePolicyRule.id.desc()).all()
     ]
 
@@ -406,17 +376,7 @@ def create_policy_rule(payload: PolicyRuleCreate, db: Session = Depends(get_db))
     db.add(row)
     db.commit()
     db.refresh(row)
-    return PolicyRuleOut(
-        id=row.id,
-        semester_id=row.semester_id,
-        target_type=row.target_type,
-        target_id=row.target_id,
-        rule_type=row.rule_type,
-        day_of_week=row.day_of_week,
-        period_index=row.period_index,
-        is_active=row.is_active,
-        remark=row.remark,
-    )
+    return PolicyRuleOut(id=row.id, semester_id=row.semester_id, target_type=row.target_type, target_id=row.target_id, rule_type=row.rule_type, day_of_week=row.day_of_week, period_index=row.period_index, is_active=row.is_active, remark=row.remark)
 
 
 @router.delete("/policy-rules/{rule_id}")
@@ -427,3 +387,21 @@ def delete_policy_rule(rule_id: int, db: Session = Depends(get_db)):
     db.delete(row)
     db.commit()
     return {"deleted_id": rule_id}
+
+
+# ---------- 9. 一站式 6-Sheet 基础数据集中导入 ----------
+@router.get("/master-import/template")
+def download_master_import_template():
+    data = build_master_data_template()
+    filename = "基础数据集中导入模板(6合一).xlsx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@router.post("/master-import/upload")
+async def upload_master_import_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    raw = await file.read()
+    return import_master_data_workbook(db, raw)

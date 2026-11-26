@@ -1,4 +1,4 @@
-"""核心数据表与外键/唯一约束测试（V1.2 共 18 张表：原 16 张核心表 + system_config + schedule_policy_rule）。"""
+"""核心数据表与外键/唯一约束测试（V1.3 共 19 张核心表，含独立教学楼表 building）。"""
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
@@ -41,7 +41,7 @@ def db_session():
 
 
 def test_core_tables_registered():
-    assert len(Base.metadata.tables) == 18
+    assert len(Base.metadata.tables) == 19
 
 
 def test_multi_campus_boundary_resolution_and_lateral_grant(db_session):
@@ -68,22 +68,11 @@ def test_multi_campus_boundary_resolution_and_lateral_grant(db_session):
     node_map = {n.id: n for n in db_session.query(OrgNode).all()}
     assert resolve_campus_boundary_id(node_map, dept_cs.id) == campus_a.id
 
-    grant = OrgResourceGrant(
-        granter_org_id=lab_center.id,
-        grantee_org_id=dept_cs.id,
-        semester_id=sem.id,
-        resource_type="ROOM_POOL",
-        grant_mode="IDLE_ONLY",
-    )
+    grant = OrgResourceGrant(granter_org_id=lab_center.id, grantee_org_id=dept_cs.id, semester_id=sem.id, resource_type="ROOM_POOL", grant_mode="IDLE_ONLY")
     db_session.add(grant)
     db_session.commit()
 
-    bad_grant = OrgResourceGrant(
-        granter_org_id=dept_cs.id,
-        grantee_org_id=dept_cs.id,
-        semester_id=sem.id,
-        resource_type="ROOM_POOL",
-    )
+    bad_grant = OrgResourceGrant(granter_org_id=dept_cs.id, grantee_org_id=dept_cs.id, semester_id=sem.id, resource_type="ROOM_POOL")
     db_session.add(bad_grant)
     with pytest.raises(IntegrityError):
         db_session.commit()

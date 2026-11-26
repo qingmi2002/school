@@ -1,4 +1,4 @@
-"""版本检测与手动确认升级提醒单测（不依赖外网，使用 monkeypatch 校验）。"""
+"""版本检测与手动确认升级提醒单测（远端模拟新版本固定使用 v99.0.0，避免随 APP_VERSION 递增冲突）。"""
 from fastapi.testclient import TestClient
 
 from app.api import system as sys_api
