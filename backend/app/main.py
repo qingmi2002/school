@@ -6,13 +6,14 @@ from app.api.importer import router as importer_router
 from app.api.locks import router as locks_router
 from app.api.org import router as org_router
 from app.api.solver import router as solver_router
+from app.api.system import router as system_router
 from app.api.validator import router as validator_router
 from app.api.workbench import router as workbench_router
 from app.core.config import settings
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    version="0.9.5",
+    version=settings.APP_VERSION,
     openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
 )
 
@@ -24,6 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(system_router, prefix=settings.API_V1_PREFIX)
 app.include_router(org_router, prefix=settings.API_V1_PREFIX)
 app.include_router(locks_router, prefix=settings.API_V1_PREFIX)
 app.include_router(constraints_router, prefix=settings.API_V1_PREFIX)
@@ -39,6 +41,6 @@ def health_check():
     return {
         "status": "ok",
         "service": settings.PROJECT_NAME,
+        "version": settings.APP_VERSION,
         "mode": "multi-level-flexible",
-        "version": "0.9.5",
     }

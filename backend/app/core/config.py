@@ -3,6 +3,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "高校分级智能排课系统（多级通用版）"
+    APP_VERSION: str = "v1.0.3"
+    GITHUB_REPO: str = "qingmi2002/school"
     API_V1_PREFIX: str = "/api/v1"
     DATABASE_URL: str = "postgresql+psycopg2://schedule_admin:change_me_in_prod@localhost:5432/smart_schedule"
     REDIS_URL: str = "redis://localhost:6379/0"

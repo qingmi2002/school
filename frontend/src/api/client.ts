@@ -8,6 +8,17 @@ export const apiClient = axios.create({
 export type ConstraintLevel = "HARD" | "SOFT";
 export type SharingPolicy = "EXCLUSIVE" | "IDLE_BORROW" | "PUBLIC_POOL";
 
+export interface VersionInfo {
+  current_version: string;
+  latest_version: string;
+  has_update: boolean;
+  check_status: string;
+  release_url: string;
+  release_notes: string;
+  linux_upgrade_cmd: string;
+  nas_upgrade_tip: string;
+}
+
 export interface TeacherUnavailableSlotPayload {
   timeslot_id: number;
   constraint_level: ConstraintLevel;
@@ -110,6 +121,11 @@ export interface HealthCheckReport {
   conflict_count: number;
   elapsed_ms: number;
   issues: HealthCheckIssue[];
+}
+
+export async function fetchSystemVersion(force = false): Promise<VersionInfo> {
+  const { data } = await apiClient.get<VersionInfo>("/system/version", { params: { force } });
+  return data;
 }
 
 export async function saveTeacherUnavailableGrid(
