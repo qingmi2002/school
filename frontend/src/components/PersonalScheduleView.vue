@@ -3,19 +3,24 @@
     <template #header>
       <div class="header-bar">
         <div>
-          <div class="title">
-            {{ schedule?.owner_type === "STUDENT" ? "我的班级课表" : "我的个人教学课表" }}
-          </div>
+          <div class="title">{{ schedule?.owner_type === "STUDENT" ? "我的班级课表" : "我的个人教学课表" }}</div>
           <div class="sub">{{ schedule?.owner_name }} · {{ schedule?.sub_title }}</div>
         </div>
         <div class="actions">
-          <el-button size="small" @click="loadData">刷新课表</el-button>
-          <el-button v-if="schedule?.plan_id" type="primary" size="small" @click="downloadIcs">
-            订阅到手机日历 (.ics)
-          </el-button>
+          <el-button size="small" @click="loadData">刷新</el-button>
+          <el-button v-if="schedule?.plan_id" type="primary" size="small" @click="downloadIcs">订阅日历 (.ics)</el-button>
         </div>
       </div>
     </template>
+
+    <el-alert
+      v-if="schedule?.block_week_notices?.length"
+      type="warning"
+      :title="`整周实训 / 特殊周提醒：${schedule.block_week_notices.join('；')}`"
+      show-icon
+      :closable="false"
+      style="margin-bottom: 10px"
+    />
 
     <div class="table-wrap">
       <table class="week-table">
@@ -36,10 +41,8 @@
                 :class="c.is_public_lock ? 'is-pub' : 'is-pro'"
               >
                 <div class="c-name">
-                  {{ c.course_name }}
-                  <el-tag v-if="c.week_type !== 0" size="small" :type="c.week_type === 1 ? 'warning' : 'success'">
-                    {{ c.week_type === 1 ? "单周" : "双周" }}
-                  </el-tag>
+                  <span>{{ c.course_name }}</span>
+                  <el-tag size="small" effect="plain">{{ c.effective_weeks_label }}</el-tag>
                 </div>
                 <div class="c-meta">📍 {{ c.building }} {{ c.room_code }}</div>
                 <div class="c-meta">👨‍🏫 {{ c.teacher_name }}</div>
@@ -58,38 +61,23 @@ import { onMounted, ref } from "vue";
 import { fetchMySchedule, type PersonalCourseCard, type PersonalSchedule } from "../api/client";
 
 const days = [
-  { v: 1, l: "周一" },
-  { v: 2, l: "周二" },
-  { v: 3, l: "周三" },
-  { v: 4, l: "周四" },
-  { v: 5, l: "周五" },
+  { v: 1, l: "周一" }, { v: 2, l: "周二" }, { v: 3, l: "周三" }, { v: 4, l: "周四" }, { v: 5, l: "周五" },
 ];
 const periods = [
-  { v: 1, l: "1-2节" },
-  { v: 2, l: "3-4节" },
-  { v: 3, l: "5-6节" },
-  { v: 4, l: "7-8节" },
-  { v: 5, l: "9-10节" },
+  { v: 1, l: "1-2节" }, { v: 2, l: "3-4节" }, { v: 3, l: "5-6节" }, { v: 4, l: "7-8节" }, { v: 5, l: "9-10节" },
 ];
 
 const schedule = ref<PersonalSchedule | null>(null);
 
-async function loadData(): Promise<void> {
-  schedule.value = await fetchMySchedule();
-}
-
+async function loadData(): Promise<void> { schedule.value = await fetchMySchedule(); }
 function cardsAt(day: number, period: number): PersonalCourseCard[] {
   return (schedule.value?.cards || []).filter((c) => c.day_of_week === day && c.period_index === period);
 }
-
 function downloadIcs(): void {
-  if (!schedule.value?.plan_id) return;
-  window.open(`/api/v1/export/plans/${schedule.value.plan_id}/calendar.ics`, "_blank");
+  if (schedule.value?.plan_id) window.open(`/api/v1/export/plans/${schedule.value.plan_id}/calendar.ics`, "_blank");
 }
 
-onMounted(() => {
-  void loadData();
-});
+onMounted(() => { void loadData(); });
 </script>
 
 <style scoped>
@@ -105,6 +93,6 @@ onMounted(() => {
 .cell { height: 108px; }
 .course-box { border-radius: 6px; padding: 7px 8px; margin-bottom: 6px; font-size: 12px; border-left: 4px solid #2563eb; background: #eff6ff; }
 .course-box.is-pub { border-left-color: #64748b; background: #f1f5f9; }
-.c-name { font-weight: 600; color: #0f172a; margin-bottom: 4px; display: flex; justify-content: space-between; gap: 4px; }
+.c-name { font-weight: 600; color: #0f172a; margin-bottom: 4px; display: flex; justify-content: space-between; gap: 4px; align-items: center; }
 .c-meta { font-size: 11px; color: #475569; margin-top: 2px; }
 </style>

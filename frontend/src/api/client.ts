@@ -66,6 +66,7 @@ export interface PersonalCourseCard {
   teacher_name: string;
   cohort_names: string[];
   week_type: number;
+  effective_weeks_label: string;
   is_public_lock: boolean;
 }
 
@@ -74,6 +75,7 @@ export interface PersonalSchedule {
   owner_name: string;
   sub_title: string;
   plan_id: number | null;
+  block_week_notices: string[];
   cards: PersonalCourseCard[];
 }
 
@@ -202,11 +204,6 @@ export async function fetchMeApi(): Promise<UserProfile> {
   return data;
 }
 
-export async function seedDemoApi() {
-  const { data } = await apiClient.post("/auth/seed-demo");
-  return data;
-}
-
 export async function fetchScopedUsers(): Promise<UserProfile[]> {
   const { data } = await apiClient.get<UserProfile[]>("/auth/users");
   return data;
@@ -250,11 +247,7 @@ export async function fetchRoomsWithRules(): Promise<RoomWithRules[]> {
   return data;
 }
 
-export async function updateRoomPolicy(
-  roomId: number,
-  sharingPolicy: SharingPolicy,
-  envTags: string[]
-) {
+export async function updateRoomPolicy(roomId: number, sharingPolicy: SharingPolicy, envTags: string[]) {
   const { data } = await apiClient.patch(`/constraints/rooms/${roomId}/policy`, {
     sharing_policy: sharingPolicy,
     env_tags: envTags,
@@ -287,10 +280,10 @@ export async function fetchMatrixLights(payload: {
   target_classroom_id: number;
   scope: "SINGLE_DEPT" | "SCHOOL_WIDE";
 }) {
-  const { data } = await apiClient.post<{
-    elapsed_ms: number;
-    slots: Record<number, SlotLightResult>;
-  }>("/validator/matrix-lights", payload);
+  const { data } = await apiClient.post<{ elapsed_ms: number; slots: Record<number, SlotLightResult> }>(
+    "/validator/matrix-lights",
+    payload
+  );
   return data;
 }
 
@@ -305,10 +298,7 @@ export async function applyDragMove(payload: {
   return data;
 }
 
-export async function runHealthCheck(
-  semesterId: number,
-  scope: "SINGLE_DEPT" | "SCHOOL_WIDE"
-): Promise<HealthCheckReport> {
+export async function runHealthCheck(semesterId: number, scope: "SINGLE_DEPT" | "SCHOOL_WIDE"): Promise<HealthCheckReport> {
   const { data } = await apiClient.get<HealthCheckReport>("/validator/health-check", {
     params: { semester_id: semesterId, scope },
   });
@@ -316,8 +306,6 @@ export async function runHealthCheck(
 }
 
 export async function triggerArchivePlan(planId: number, vendor: string) {
-  const { data } = await apiClient.post(`/export/plans/${planId}/archive`, null, {
-    params: { vendor },
-  });
+  const { data } = await apiClient.post(`/export/plans/${planId}/archive`, null, { params: { vendor } });
   return data;
 }
