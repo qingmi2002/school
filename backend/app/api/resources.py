@@ -14,7 +14,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.auth.security import hash_password
+from app.auth.security import get_optional_current_user
 from app.db.session import get_db
+from app.org.rbac import assert_org_subtree_access
 from app.importer.master_data_importer import build_master_data_template, import_master_data_workbook
 from app.models import (
     Building,
@@ -164,7 +166,12 @@ def list_teachers(org_node_id: Optional[int] = Query(None), db: Session = Depend
 
 
 @router.post("/teachers", response_model=TeacherOut)
-def create_teacher(payload: TeacherCreate, db: Session = Depends(get_db)):
+def create_teacher(
+    payload: TeacherCreate,
+    db: Session = Depends(get_db),
+    current_user: Optional[SysUser] = Depends(get_optional_current_user),
+):
+    assert_org_subtree_access(db, current_user, payload.org_node_id)
     role = payload.role_code if payload.role_code in ("TEACHER", "TEACHING_LEAD") else "TEACHER"
     u = SysUser(username=payload.username, real_name=payload.real_name, org_node_id=payload.org_node_id, role_code=role, teacher_priority=payload.teacher_priority, password_hash=hash_password(payload.password))
     db.add(u)
@@ -205,7 +212,12 @@ def list_cohorts(org_node_id: Optional[int] = Query(None), db: Session = Depends
 
 
 @router.post("/cohorts", response_model=CohortOut)
-def create_cohort(payload: CohortCreate, db: Session = Depends(get_db)):
+def create_cohort(
+    payload: CohortCreate,
+    db: Session = Depends(get_db),
+    current_user: Optional[SysUser] = Depends(get_optional_current_user),
+):
+    assert_org_subtree_access(db, current_user, payload.org_node_id)
     c = StudentCohort(**payload.model_dump())
     db.add(c)
     db.commit()
@@ -302,7 +314,12 @@ def list_classrooms(usage_mode: Optional[str] = Query(None), db: Session = Depen
 
 
 @router.post("/classrooms", response_model=ClassroomOut)
-def create_classroom(payload: ClassroomCreate, db: Session = Depends(get_db)):
+def create_classroom(
+    payload: ClassroomCreate,
+    db: Session = Depends(get_db),
+    current_user: Optional[SysUser] = Depends(get_optional_current_user),
+):
+    assert_org_subtree_access(db, current_user, payload.owner_org_id)
     data = payload.model_dump()
     if data.get("building_id"):
         b = db.query(Building).filter(Building.id == data["building_id"]).first()

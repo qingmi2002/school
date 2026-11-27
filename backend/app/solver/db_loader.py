@@ -282,7 +282,10 @@ def persist_solver_result(
         t.id: t.week_mask
         for t in db.query(TeachingTask).filter(TeachingTask.semester_id == semester_id).all()
     }
+    # 先写入本次新求解排课明细（保持顺序兼容）
+    used_unique_keys = set()
     for item in result.assignments:
+        used_unique_keys.add((item.timeslot_id, item.classroom_id, item.week_type))
         db.add(
             ScheduleDetail(
                 plan_id=plan.id,
@@ -294,6 +297,46 @@ def persist_solver_result(
                 is_manual_adjusted=False,
             )
         )
+
+    # V1.9 逻辑收口：局部重排时，把上一版方案中已锁定(is_locked=True)任务的课表明细原样继承到新方案，避免锁课丢失
+    locked_task_ids = [
+        t.id
+        for t in db.query(TeachingTask)
+        .filter(TeachingTask.semester_id == semester_id, TeachingTask.is_locked.is_(True))
+        .all()
+    ]
+    if locked_task_ids:
+        prev_plan_q = db.query(SchedulePlan).filter(
+            SchedulePlan.semester_id == semester_id, SchedulePlan.id != plan.id
+        )
+        if run_mode == "SINGLE_DEPT" and org_node_id is not None:
+            prev_plan_q = prev_plan_q.filter(SchedulePlan.org_node_id == org_node_id)
+        prev_plan = prev_plan_q.order_by(SchedulePlan.id.desc()).first()
+        if prev_plan is not None:
+            inherited_locked = (
+                db.query(ScheduleDetail)
+                .filter(
+                    ScheduleDetail.plan_id == prev_plan.id,
+                    ScheduleDetail.task_id.in_(locked_task_ids),
+                )
+                .all()
+            )
+            for d in inherited_locked:
+                ukey = (d.timeslot_id, d.classroom_id, d.week_type)
+                if ukey in used_unique_keys:
+                    continue
+                used_unique_keys.add(ukey)
+                db.add(
+                    ScheduleDetail(
+                        plan_id=plan.id,
+                        task_id=d.task_id,
+                        timeslot_id=d.timeslot_id,
+                        classroom_id=d.classroom_id,
+                        week_type=d.week_type,
+                        week_mask=d.week_mask if d.week_mask is not None else task_masks.get(d.task_id),
+                        is_manual_adjusted=True,
+                    )
+                )
     db.commit()
     db.refresh(plan)
     return plan

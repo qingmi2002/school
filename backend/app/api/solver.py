@@ -7,8 +7,10 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.celery_app import celery_app
+from app.auth.security import get_optional_current_user
 from app.db.session import get_db
-from app.models import OrgNode, Semester
+from app.org.rbac import assert_org_subtree_access
+from app.models import OrgNode, Semester, SysUser
 from app.solver.cp_sat_engine import CourseScheduleSolver
 from app.solver.db_loader import load_solver_input_from_db, persist_solver_result
 from app.solver.schemas import SolverInput, SolverResult
@@ -40,7 +42,11 @@ def solve_dry_run(payload: SolverInput):
 
 
 @router.post("/one-click")
-def one_click_solve_and_persist(req: OneClickSolveRequest, db: Session = Depends(get_db)):
+def one_click_solve_and_persist(
+    req: OneClickSolveRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[SysUser] = Depends(get_optional_current_user),
+):
     """V1.5 一键智能排课：自动体检基础数据 → CP-SAT 求解 → 落库生成方案 → 返回 plan_id 直接进入工作台微调。"""
     sem = (
         db.query(Semester).filter(Semester.id == req.semester_id).first()
@@ -58,6 +64,7 @@ def one_click_solve_and_persist(req: OneClickSolveRequest, db: Session = Depends
     if node is None:
         raise HTTPException(status_code=400, detail="请先初始化组织节点")
 
+    assert_org_subtree_access(db, current_user, node.id)
     inp = load_solver_input_from_db(
         db=db,
         semester_id=sem.id,

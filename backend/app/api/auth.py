@@ -25,7 +25,7 @@ from app.models import (
     TeachingTask,
     Timeslot,
 )
-from app.org.rbac import ROLE_LABELS, SCHEDULER_ROLES, get_role_permissions
+from app.org.rbac import ROLE_LABELS, SCHEDULER_ROLES, assert_org_subtree_access, get_role_permissions
 
 router = APIRouter(prefix="/auth", tags=["auth-and-personal"])
 
@@ -173,7 +173,12 @@ def list_scoped_users_api(current_user: SysUser = Depends(get_current_user), db:
 
 @router.get("/my-schedule", response_model=PersonalScheduleOut)
 def get_my_schedule_api(current_user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
-    plan = db.query(SchedulePlan).order_by(SchedulePlan.is_published.desc(), SchedulePlan.id.desc()).first()
+    plan = (
+        db.query(SchedulePlan)
+        .filter(SchedulePlan.is_published.is_(True))
+        .order_by(SchedulePlan.id.desc())
+        .first()
+    )
     ts_map = {t.id: t for t in db.query(Timeslot).all()}
     room_map = {r.id: r for r in db.query(Classroom).all()}
     user_map = {u.id: u for u in db.query(SysUser).all()}
@@ -320,6 +325,9 @@ def reset_password_api(
     target = db.query(SysUser).filter(SysUser.id == payload.user_id).first()
     if target is None:
         raise HTTPException(status_code=404, detail="目标用户不存在")
+    if target.role_code == "SUPER_ADMIN" and current_user.role_code != "SUPER_ADMIN":
+        raise HTTPException(status_code=403, detail="越权拦截：非校级超级管理员禁止重置超级管理员密码")
+    assert_org_subtree_access(db, current_user, target.org_node_id)
     target.password_hash = hash_password(payload.new_password)
     db.commit()
     return {"reset": True, "user_id": target.id, "username": target.username}

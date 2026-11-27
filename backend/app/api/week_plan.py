@@ -1,18 +1,21 @@
-"""V1.4 班级周历进程表（整周实训/实习/考试/停课）与周次位掩码计算 REST API。"""
+"""V1.4 + V1.9 班级周历进程表（整周实训/实习/考试/停课）与周次位掩码联动重算 REST API。"""
 from typing import Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.auth.security import get_optional_current_user
 from app.core.week_mask import (
     build_week_mask,
+    fit_week_mask_to_hours,
     mask_to_label,
     subtract_blocked_weeks,
     weeks_to_mask,
 )
 from app.db.session import get_db
-from app.models import Classroom, CohortWeekPlan, Semester, StudentCohort, SysUser
+from app.models import Classroom, CohortWeekPlan, Semester, StudentCohort, SysUser, TeachingTask
+from app.org.rbac import assert_org_subtree_access
 
 router = APIRouter(prefix="/week-plan", tags=["week-plan"])
 
@@ -112,7 +115,11 @@ def get_week_plan_matrix(semester_id: int = Query(1), db: Session = Depends(get_
 
 
 @router.put("/range")
-def upsert_week_range(payload: WeekRangeUpsert, db: Session = Depends(get_db)):
+def upsert_week_range(
+    payload: WeekRangeUpsert,
+    db: Session = Depends(get_db),
+    current_user: Optional[SysUser] = Depends(get_optional_current_user),
+):
     if payload.start_week > payload.end_week or payload.start_week < 1 or payload.end_week > 30:
         raise HTTPException(status_code=400, detail="周次范围非法（需在 1..30 之间且起始周不大于结束周）")
 
@@ -143,6 +150,25 @@ def upsert_week_range(payload: WeekRangeUpsert, db: Session = Depends(get_db)):
             rec.block_classroom_id = payload.block_classroom_id
             rec.remark = payload.remark
 
+    cohort_row = db.query(StudentCohort).filter(StudentCohort.id == payload.cohort_id).first()
+    if cohort_row is not None:
+        assert_org_subtree_access(db, current_user, cohort_row.org_node_id)
+    db.flush()
+    affected_tasks = (
+        db.query(TeachingTask)
+        .filter(TeachingTask.semester_id == payload.semester_id, TeachingTask.is_locked.is_(False))
+        .all()
+    )
+    refit_count = 0
+    for t in affected_tasks:
+        cids = list(t.cohort_ids or [])
+        if payload.cohort_id in cids:
+            bmask = get_cohort_blocked_mask(db, payload.semester_id, cids)
+            new_mask, _, _ = fit_week_mask_to_hours(
+                t.start_week, t.end_week, t.week_type, bmask, t.total_hours, t.weekly_sessions
+            )
+            t.week_mask = new_mask
+            refit_count += 1
     db.commit()
     return {"status": "ok", "cohort_id": payload.cohort_id, "weeks": f"{payload.start_week}-{payload.end_week}", "mode": payload.week_mode}
 
