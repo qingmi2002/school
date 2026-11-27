@@ -15,6 +15,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from sqlalchemy.orm import Session
 
+from app.core.week_mask import build_week_mask, masks_overlap
 from app.db.org_presets import resolve_campus_boundary_id
 from app.locks.service import get_effective_locks_for_node
 from app.models import (
@@ -23,6 +24,7 @@ from app.models import (
     RoomCourseRule,
     ScheduleDetail,
     SchedulePlan,
+    SchedulePolicyRule,
     TeacherUnavailable,
     TeachingTask,
     Timeslot,
@@ -71,12 +73,24 @@ class _PlanSnapshot:
             else:
                 self.deny_rules[rl.classroom_id].append(rl)
 
-        # 教师禁排索引
-        self.teacher_unavail: Dict[Tuple[int, int], Tuple[str, Optional[str]]] = {}
+        # 教师禁排索引（V1.7 支持分周次 week_mask 精准校验）
+        self.teacher_unavail: Dict[Tuple[int, int], List[Tuple[str, Optional[str], Optional[int]]]] = defaultdict(list)
         for u in db.query(TeacherUnavailable).filter(
             TeacherUnavailable.semester_id == plan.semester_id
         ).all():
-            self.teacher_unavail[(u.teacher_id, u.timeslot_id)] = (u.constraint_level, u.reason)
+            self.teacher_unavail[(u.teacher_id, u.timeslot_id)].append(
+                (u.constraint_level, u.reason, getattr(u, 'week_mask', None))
+            )
+
+        # V1.7 周期策略规则索引
+        self.policy_rules = (
+            db.query(SchedulePolicyRule)
+            .filter(
+                SchedulePolicyRule.is_active.is_(True),
+                (SchedulePolicyRule.semester_id == plan.semester_id) | (SchedulePolicyRule.semester_id.is_(None)),
+            )
+            .all()
+        )
 
         # 分级公共课锁定索引
         effective_locks = get_effective_locks_for_node(
@@ -141,15 +155,31 @@ class _PlanSnapshot:
         if target_room is None:
             return [f"目标教室/机房 id={target_room_id} 不存在"], []
 
-        # 1. 教师硬/软禁排
-        unavail = self.teacher_unavail.get((task.teacher_id, target_ts_id))
-        if unavail:
-            level, reason = unavail
-            suffix = f"（原因：{reason}）" if reason else ""
-            if level == "HARD":
-                hard.append(f"任课教师在该时段已设绝对禁排{suffix}")
-            else:
-                soft.append(f"任课教师在该时段设置了偏好避让{suffix}")
+        # 1. 教师硬/软禁排（V1.7 精确 week_mask 对齐）
+        full_m = build_week_mask(1, 30, 0)
+        det_mask = getattr(detail, 'week_mask', None) or getattr(task, 'week_mask', None) or build_week_mask(task.start_week, task.end_week, detail.week_type)
+        for level, reason, u_mask in self.teacher_unavail.get((task.teacher_id, target_ts_id), []):
+            if masks_overlap(det_mask, u_mask if u_mask is not None else full_m):
+                suffix = f"（原因：{reason}）" if reason else ""
+                if level == "HARD":
+                    hard.append(f"任课教师在该时段已设绝对禁排{suffix}")
+                else:
+                    soft.append(f"任课教师在该时段偏好避开{suffix}")
+
+        # 1.5 V1.7 周期策略规则校验
+        for pr in self.policy_rules:
+            if pr.rule_type != 'FORBID_SCHEDULE':
+                continue
+            if pr.day_of_week not in (0, target_ts.day_of_week) or pr.period_index not in (0, target_ts.period_index):
+                continue
+            matched = (
+                pr.target_type == 'GLOBAL'
+                or (pr.target_type == 'TEACHER' and (pr.target_id is None or pr.target_id == task.teacher_id))
+                or (pr.target_type == 'COHORT' and (pr.target_id is None or pr.target_id in (task.cohort_ids or [])))
+                or (pr.target_type == 'CLASSROOM' and (pr.target_id is None or pr.target_id == target_room_id))
+            )
+            if matched:
+                hard.append(f"违反周期禁排策略：{pr.remark or '该时段被设为禁排'}")
 
         if target_ts.is_evening:
             soft.append("目标时段为晚间课程（软约束扣分）")
@@ -213,7 +243,13 @@ class _PlanSnapshot:
         for other in self.details_by_ts.get(target_ts_id, []):
             if other.id == detail.id:
                 continue
-            if not _weeks_overlap(detail.week_type, other.week_type):
+            other_task = self.task_by_id.get(other.task_id)
+            other_mask = (
+                getattr(other, 'week_mask', None)
+                or (getattr(other_task, 'week_mask', None) if other_task else None)
+                or build_week_mask(other_task.start_week if other_task else 1, other_task.end_week if other_task else 18, other.week_type)
+            )
+            if not masks_overlap(det_mask, other_mask):
                 continue
             other_task = self.task_by_id.get(other.task_id)
             other_name = other_task.course_name if other_task else f"任务#{other.task_id}"

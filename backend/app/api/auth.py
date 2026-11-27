@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.week_plan import get_cohort_blocked_mask
-from app.auth.security import create_access_token, get_current_user, verify_password
+from app.auth.security import create_access_token, get_current_user, get_optional_current_user, hash_password, verify_password
 from app.auth.seed import seed_full_demo_data
 from app.core.week_mask import build_week_mask, mask_to_label, subtract_blocked_weeks
 from app.db.session import get_db
@@ -18,11 +18,12 @@ from app.models import (
     ScheduleDetail,
     SchedulePlan,
     StudentCohort,
+    SystemConfig,
     SysUser,
     TeachingTask,
     Timeslot,
 )
-from app.org.rbac import ROLE_LABELS, get_role_permissions
+from app.org.rbac import ROLE_LABELS, SCHEDULER_ROLES, get_role_permissions
 
 router = APIRouter(prefix="/auth", tags=["auth-and-personal"])
 
@@ -95,7 +96,21 @@ def _build_profile(db: Session, user: SysUser) -> UserProfileOut:
 
 
 @router.post("/seed-demo")
-def seed_demo_api(db: Session = Depends(get_db)):
+def seed_demo_api(
+    db: Session = Depends(get_db),
+    current_user: Optional[SysUser] = Depends(get_optional_current_user),
+):
+    """V1.7 安全加固：仅空库冷启动、或超级管理员且演示模式开启时允许初始化演示数据。"""
+    existing_users = db.query(SysUser).count()
+    demo_cfg = db.query(SystemConfig).filter(SystemConfig.config_key == "site_config").first()
+    demo_enabled = True
+    if demo_cfg and isinstance(demo_cfg.config_value, dict):
+        demo_enabled = bool(demo_cfg.config_value.get("enable_demo_mode", True))
+    if existing_users > 0:
+        if not demo_enabled:
+            raise HTTPException(status_code=403, detail="生产环境已关闭演示模式，禁止初始化演示数据")
+        if current_user is not None and current_user.role_code != "SUPER_ADMIN":
+            raise HTTPException(status_code=403, detail="仅校级超级管理员可重置演示数据")
     return seed_full_demo_data(db)
 
 
@@ -241,3 +256,44 @@ def get_my_schedule_api(current_user: SysUser = Depends(get_current_user), db: S
         block_week_notices=block_notices,
         cards=cards,
     )
+
+
+class ChangePasswordIn(BaseModel):
+    old_password: str
+    new_password: str = Field(min_length=6, max_length=64)
+
+
+class ResetPasswordIn(BaseModel):
+    user_id: int
+    new_password: str = Field(default="123456", min_length=6, max_length=64)
+
+
+@router.post("/change-password")
+def change_password_api(
+    payload: ChangePasswordIn,
+    current_user: SysUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """V1.7 师生及管理员自助修改本人密码。"""
+    if not verify_password(payload.old_password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="原密码不正确")
+    current_user.password_hash = hash_password(payload.new_password)
+    db.commit()
+    return {"updated": True, "username": current_user.username}
+
+
+@router.post("/reset-password")
+def reset_password_api(
+    payload: ResetPasswordIn,
+    current_user: SysUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """V1.7 排课管理员重置指定用户密码。"""
+    if current_user.role_code not in SCHEDULER_ROLES:
+        raise HTTPException(status_code=403, detail="仅排课管理员可重置用户密码")
+    target = db.query(SysUser).filter(SysUser.id == payload.user_id).first()
+    if target is None:
+        raise HTTPException(status_code=404, detail="目标用户不存在")
+    target.password_hash = hash_password(payload.new_password)
+    db.commit()
+    return {"reset": True, "user_id": target.id, "username": target.username}
