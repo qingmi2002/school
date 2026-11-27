@@ -214,6 +214,7 @@ class Course(Base):
     course_category: Mapped[str] = mapped_column(String(20), default="THEORY", nullable=False)
     required_room_type: Mapped[str] = mapped_column(String(24), default="NORMAL", nullable=False)
     default_weekly_sessions: Mapped[int] = mapped_column(SmallInteger, default=2, nullable=False)
+    default_total_hours: Mapped[int] = mapped_column(SmallInteger, default=32, nullable=False)  # V1.6 学期默认总学时
     allow_combined: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
@@ -243,6 +244,8 @@ class TeachingTask(Base):
     start_week: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
     end_week: Mapped[int] = mapped_column(SmallInteger, default=18, nullable=False)
     week_mask: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # V1.4 精确周次位掩码
+    total_hours: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)  # V1.6 学期总课时(学时)
+    prefer_consecutive: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)  # V1.6 实验/上机连堂偏好
     total_students: Mapped[int] = mapped_column(Integer, nullable=False)
     required_room_type: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
     required_env_tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)

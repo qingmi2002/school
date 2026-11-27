@@ -1,4 +1,4 @@
-"""V1.5 课程库、本学期班级选课、多班指定合班耦合与教师多课多班负荷统计 API。"""
+"""V1.5 + V1.6 课程库、学期总课时耦合、本学期班级选课、多班指定合班与教师负荷统计 API。"""
 from collections import defaultdict
 from typing import List, Optional
 
@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core.week_mask import build_week_mask
+from app.core.week_mask import build_week_mask, fit_week_mask_to_hours, mask_to_label, mask_to_weeks, weeks_to_mask
 from app.db.session import get_db
-from app.models import Course, OrgNode, Semester, StudentCohort, SysUser, TeachingTask
+from app.models import CohortWeekPlan, Course, OrgNode, Semester, StudentCohort, SysUser, TeachingTask
 
 router = APIRouter(prefix="/curriculum", tags=["curriculum-and-tasks"])
 
@@ -17,9 +17,10 @@ class CourseCreateIn(BaseModel):
     owner_org_id: Optional[int] = None
     course_code: str
     course_name: str
-    course_category: str = "THEORY"  # THEORY / LAB / MIXED
-    required_room_type: str = "NORMAL"  # NORMAL / COMPUTER_LAB / NETWORK_LAB / TRAINING_ROOM / LECTURE_HALL
+    course_category: str = "THEORY"
+    required_room_type: str = "NORMAL"
     default_weekly_sessions: int = 2
+    default_total_hours: int = 32  # V1.6 默认学期总学时
     allow_combined: bool = True
 
 
@@ -34,7 +35,9 @@ class TeachingTaskCreateIn(BaseModel):
     teacher_id: int
     cohort_ids: List[int] = Field(min_length=1)
     weekly_sessions: Optional[int] = None
-    week_type: int = 0  # 0全周 1单周 2双周
+    total_hours: Optional[int] = None  # V1.6 学期总学时（自动结合周历推算精确周次）
+    prefer_consecutive: bool = False  # V1.6 实验/上机连堂偏好
+    week_type: int = 0
     start_week: int = 1
     end_week: int = 18
     total_students: Optional[int] = None
@@ -47,11 +50,23 @@ class MergeTasksIn(BaseModel):
     required_room_type: Optional[str] = None
 
 
+def _get_union_blocked_mask(db: Session, semester_id: int, cohort_ids: List[int]) -> int:
+    if not cohort_ids:
+        return 0
+    rows = (
+        db.query(CohortWeekPlan)
+        .filter(
+            CohortWeekPlan.semester_id == semester_id,
+            CohortWeekPlan.cohort_id.in_(cohort_ids),
+            CohortWeekPlan.week_mode != "REGULAR",
+        )
+        .all()
+    )
+    return weeks_to_mask([r.week_no for r in rows])
+
+
 @router.get("/courses")
-def list_courses(
-    owner_org_id: Optional[int] = Query(None),
-    db: Session = Depends(get_db),
-):
+def list_courses(owner_org_id: Optional[int] = Query(None), db: Session = Depends(get_db)):
     q = db.query(Course).filter(Course.is_active.is_(True))
     if owner_org_id is not None:
         q = q.filter(Course.owner_org_id == owner_org_id)
@@ -65,6 +80,7 @@ def list_courses(
             "course_category": c.course_category,
             "required_room_type": c.required_room_type,
             "default_weekly_sessions": c.default_weekly_sessions,
+            "default_total_hours": int(getattr(c, "default_total_hours", 32) or 32),
             "allow_combined": c.allow_combined,
         }
         for c in rows
@@ -89,6 +105,7 @@ def create_course(payload: CourseCreateIn, db: Session = Depends(get_db)):
         course_category=payload.course_category,
         required_room_type=payload.required_room_type,
         default_weekly_sessions=payload.default_weekly_sessions,
+        default_total_hours=payload.default_total_hours,
         allow_combined=payload.allow_combined,
         is_active=True,
     )
@@ -103,6 +120,7 @@ def create_course(payload: CourseCreateIn, db: Session = Depends(get_db)):
         "course_category": row.course_category,
         "required_room_type": row.required_room_type,
         "default_weekly_sessions": row.default_weekly_sessions,
+        "default_total_hours": row.default_total_hours,
         "allow_combined": row.allow_combined,
     }
 
@@ -121,6 +139,10 @@ def _serialize_task(t: TeachingTask, teacher_map: dict, cohort_map: dict) -> dic
     cids = list(t.cohort_ids or [])
     c_names = [cohort_map[cid].cohort_name for cid in cids if cid in cohort_map]
     teacher = teacher_map.get(t.teacher_id)
+    eff_mask = t.week_mask if t.week_mask is not None else build_week_mask(t.start_week, t.end_week, t.week_type)
+    eff_weeks = len(mask_to_weeks(eff_mask))
+    planned_actual_hours = eff_weeks * int(t.weekly_sessions or 1) * 2
+    target_hours = getattr(t, "total_hours", None)
     return {
         "id": t.id,
         "semester_id": t.semester_id,
@@ -136,6 +158,11 @@ def _serialize_task(t: TeachingTask, teacher_map: dict, cohort_map: dict) -> dic
         "cohort_names": c_names,
         "is_combined": len(cids) >= 2,
         "weekly_sessions": t.weekly_sessions,
+        "total_hours": target_hours,
+        "planned_actual_hours": planned_actual_hours,
+        "hours_sufficient": (target_hours is None) or (planned_actual_hours >= target_hours),
+        "effective_weeks_label": mask_to_label(eff_mask),
+        "prefer_consecutive": bool(getattr(t, "prefer_consecutive", False)),
         "week_type": t.week_type,
         "start_week": t.start_week,
         "end_week": t.end_week,
@@ -195,9 +222,18 @@ def create_teaching_task(payload: TeachingTaskCreateIn, db: Session = Depends(ge
     course_category = payload.course_category or (course.course_category if course else "THEORY")
     required_room_type = payload.required_room_type or (course.required_room_type if course else None)
     weekly_sessions = payload.weekly_sessions or (course.default_weekly_sessions if course else 2)
+    target_hours = payload.total_hours if payload.total_hours is not None else (
+        int(getattr(course, "default_total_hours", 32) or 32) if course else None
+    )
     auto_students = sum(int(c.student_count or 40) for c in cohorts)
     total_students = payload.total_students if payload.total_students is not None else auto_students
     org_node_id = payload.org_node_id or cohorts[0].org_node_id
+    sorted_cids = sorted(set(payload.cohort_ids))
+
+    blocked_mask = _get_union_blocked_mask(db, sem.id, sorted_cids)
+    eff_mask, _, _ = fit_week_mask_to_hours(
+        payload.start_week, payload.end_week, payload.week_type, blocked_mask, target_hours, weekly_sessions
+    )
 
     task = TeachingTask(
         semester_id=sem.id,
@@ -208,12 +244,14 @@ def create_teaching_task(payload: TeachingTaskCreateIn, db: Session = Depends(ge
         course_category=course_category,
         required_room_type=required_room_type,
         teacher_id=teacher.id,
-        cohort_ids=sorted(set(payload.cohort_ids)),
+        cohort_ids=sorted_cids,
         weekly_sessions=weekly_sessions,
+        total_hours=target_hours,
+        prefer_consecutive=payload.prefer_consecutive,
         week_type=payload.week_type,
         start_week=payload.start_week,
         end_week=payload.end_week,
-        week_mask=build_week_mask(payload.start_week, payload.end_week, payload.week_type),
+        week_mask=eff_mask,
         total_students=total_students,
         required_env_tags=payload.required_env_tags,
     )
@@ -225,7 +263,6 @@ def create_teaching_task(payload: TeachingTaskCreateIn, db: Session = Depends(ge
 
 @router.post("/tasks/merge")
 def merge_tasks_into_combined(payload: MergeTasksIn, db: Session = Depends(get_db)):
-    """将多个班级已选的同一门课任务一键指定合并为合班教学任务（自动汇总人数、强制走流动教室）。"""
     tasks = db.query(TeachingTask).filter(TeachingTask.id.in_(payload.task_ids)).all()
     if len(tasks) < 2:
         raise HTTPException(status_code=400, detail="请至少选择 2 条教学任务进行合班")
@@ -245,6 +282,12 @@ def merge_tasks_into_combined(payload: MergeTasksIn, db: Session = Depends(get_d
         base.teacher_id = payload.teacher_id
     if payload.required_room_type is not None:
         base.required_room_type = payload.required_room_type
+
+    blocked_mask = _get_union_blocked_mask(db, base.semester_id, merged_cohorts)
+    eff_mask, _, _ = fit_week_mask_to_hours(
+        base.start_week, base.end_week, base.week_type, blocked_mask, base.total_hours, base.weekly_sessions
+    )
+    base.week_mask = eff_mask
 
     for extra in tasks[1:]:
         db.delete(extra)
@@ -268,7 +311,6 @@ def delete_teaching_task(task_id: int, db: Session = Depends(get_db)):
 
 @router.get("/teacher-workload")
 def get_teacher_workload(semester_id: Optional[int] = Query(None), db: Session = Depends(get_db)):
-    """汇总每位教师本学期所带多门课程、多个班级及总周节次。"""
     q = db.query(TeachingTask)
     if semester_id is not None:
         q = q.filter(TeachingTask.semester_id == semester_id)
@@ -285,6 +327,10 @@ def get_teacher_workload(semester_id: Optional[int] = Query(None), db: Session =
         u = teacher_map.get(tid)
         courses = sorted({f"{t.course_name}({t.course_code})" for t in t_list})
         cohorts = sorted({cohort_map[cid].cohort_name for t in t_list for cid in (t.cohort_ids or []) if cid in cohort_map})
+        total_sem_hours = 0
+        for t in t_list:
+            eff_mask = t.week_mask if t.week_mask is not None else build_week_mask(t.start_week, t.end_week, t.week_type)
+            total_sem_hours += len(mask_to_weeks(eff_mask)) * int(t.weekly_sessions or 1) * 2
         result.append(
             {
                 "teacher_id": tid,
@@ -294,9 +340,10 @@ def get_teacher_workload(semester_id: Optional[int] = Query(None), db: Session =
                 "task_count": len(t_list),
                 "combined_task_count": sum(1 for t in t_list if len(t.cohort_ids or []) >= 2),
                 "total_weekly_sessions": sum(int(t.weekly_sessions or 0) for t in t_list),
+                "total_semester_hours": total_sem_hours,
                 "courses": courses,
                 "cohorts": cohorts,
             }
         )
-    result.sort(key=lambda x: (-x["total_weekly_sessions"], x["teacher_id"]))
+    result.sort(key=lambda x: (-x["total_semester_hours"], -x["total_weekly_sessions"], x["teacher_id"]))
     return result

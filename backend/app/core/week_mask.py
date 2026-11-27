@@ -66,3 +66,32 @@ def mask_to_label(mask: int) -> str:
             start = prev = w
     ranges.append(f"{start}" if start == prev else f"{start}-{prev}")
     return ",".join(ranges) + "周"
+
+
+def fit_week_mask_to_hours(
+    start_week: int,
+    end_week: int,
+    week_type: int,
+    blocked_mask: int,
+    total_hours: int | None,
+    weekly_sessions: int,
+    hours_per_session: int = 2,
+) -> tuple[int, int, int]:
+    """
+    V1.6 学期总课时与班级周历自动耦合：
+    - 从 [start_week, end_week] 剔除实训/考试/假期等 blocked_mask 周次；
+    - 若指定了 total_hours（如 32 学时），按每次课 hours_per_session（默认 2 学时）自动截取凑满总课时所需的有效周次；
+    - 返回 (effective_mask, effective_weeks_count, planned_actual_hours)。
+    """
+    raw_mask = build_week_mask(start_week, end_week, week_type)
+    avail_weeks = mask_to_weeks(subtract_blocked_weeks(raw_mask, blocked_mask))
+    per_week_hours = max(1, int(weekly_sessions or 1)) * max(1, hours_per_session)
+
+    if total_hours and total_hours > 0:
+        needed_weeks = (total_hours + per_week_hours - 1) // per_week_hours
+        chosen = avail_weeks[:needed_weeks]
+    else:
+        chosen = avail_weeks
+
+    eff_mask = weeks_to_mask(chosen)
+    return eff_mask, len(chosen), len(chosen) * per_week_hours

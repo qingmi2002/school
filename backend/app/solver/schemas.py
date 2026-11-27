@@ -20,6 +20,7 @@ class SolverRoom(BaseModel):
     room_type: str = "NORMAL"  # NORMAL / COMPUTER_LAB / NETWORK_LAB / TRAINING_ROOM / LECTURE_HALL / SPORTS
     usage_mode: str = "FLOATING"  # FIXED 固定班级独占 / FLOATING 流动教室(支持合班)
     fixed_cohort_id: Optional[int] = None
+    sharing_policy: str = "IDLE_BORROW"  # EXCLUSIVE / IDLE_BORROW / PUBLIC_POOL
     env_tags: List[str] = Field(default_factory=list)
 
 
@@ -36,6 +37,8 @@ class SolverTask(BaseModel):
     total_students: int = 30
     required_room_type: Optional[str] = None
     teacher_priority: int = 1  # 1普通 2骨干/教授 3外聘高优
+    week_mask: Optional[int] = None  # V1.6 精确周次位掩码（支持分段周复用与避让实训周）
+    prefer_consecutive: bool = False  # V1.6 实验/上机连堂偏好
     required_env_tags: List[str] = Field(default_factory=list)
 
 
@@ -53,6 +56,16 @@ class SolverTeacherUnavailable(BaseModel):
     timeslot_id: int
     constraint_level: Literal["HARD", "SOFT"] = "HARD"
     reason: Optional[str] = None
+    week_mask: Optional[int] = None
+
+
+class SolverPolicyRule(BaseModel):
+    target_type: Literal["GLOBAL", "TEACHER", "COHORT", "CLASSROOM"]
+    target_id: Optional[int] = None
+    rule_type: Literal["MUST_SCHEDULE", "FORBID_SCHEDULE", "PREFER_SCHEDULE"]
+    day_of_week: int = 0  # 0=每天, 1..7
+    period_index: int = 0  # 0=全天, 1..5
+    priority: int = 10
 
 
 class SolverRoomRule(BaseModel):
@@ -70,6 +83,7 @@ class SolverInput(BaseModel):
     public_locks: List[SolverPublicLock] = Field(default_factory=list)
     teacher_unavailable: List[SolverTeacherUnavailable] = Field(default_factory=list)
     room_rules: List[SolverRoomRule] = Field(default_factory=list)
+    policy_rules: List[SolverPolicyRule] = Field(default_factory=list)
     time_limit_seconds: float = 10.0
     num_search_workers: int = 4
 

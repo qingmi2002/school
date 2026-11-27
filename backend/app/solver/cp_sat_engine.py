@@ -11,6 +11,8 @@ from typing import Dict, List, Set, Tuple
 
 from ortools.sat.python import cp_model
 
+from app.core.week_mask import build_week_mask, mask_to_weeks, masks_overlap
+
 from app.solver.schemas import (
     ScheduledAssignment,
     SolverInput,
@@ -35,15 +37,24 @@ class CourseScheduleSolver:
         self.room_by_id = {r.id: r for r in data.rooms}
         self.task_by_id = {t.id: t for t in data.tasks}
 
-        # 预处理规则索引
-        self.hard_teacher_unavail: Set[Tuple[int, int]] = set()
-        self.soft_teacher_unavail: Set[Tuple[int, int]] = set()
+        # 预处理规则索引（V1.6 支持教师分周次禁排 week_mask）
+        self.hard_teacher_unavail: Dict[Tuple[int, int], List[int]] = defaultdict(list)
+        self.soft_teacher_unavail: Dict[Tuple[int, int], List[int]] = defaultdict(list)
+        full_mask = build_week_mask(1, 30, 0)
         for item in data.teacher_unavailable:
             key = (item.teacher_id, item.timeslot_id)
+            u_mask = item.week_mask if item.week_mask is not None else full_mask
             if item.constraint_level == "HARD":
-                self.hard_teacher_unavail.add(key)
+                self.hard_teacher_unavail[key].append(u_mask)
             else:
-                self.soft_teacher_unavail.add(key)
+                self.soft_teacher_unavail[key].append(u_mask)
+
+        # V1.6 周期必排/禁排/偏好策略规则
+        self.policy_rules = list(data.policy_rules or [])
+        self.task_effective_mask: Dict[int, int] = {
+            t.id: (t.week_mask if t.week_mask is not None else build_week_mask(1, 18, t.week_type))
+            for t in data.tasks
+        }
 
         self.allow_rules_by_room: Dict[int, List] = defaultdict(list)
         self.deny_rules_by_room: Dict[int, List] = defaultdict(list)
@@ -105,9 +116,35 @@ class CourseScheduleSolver:
 
         return True, ""
 
+    def _rule_matches_slot(self, rule, ts_id: int) -> bool:
+        ts = self.timeslot_by_id[ts_id]
+        if rule.day_of_week not in (0, ts.day_of_week):
+            return False
+        if rule.period_index not in (0, ts.period_index):
+            return False
+        return True
+
+    def _rule_matches_task(self, rule, task: SolverTask, room_id: int | None = None) -> bool:
+        if rule.target_type == "GLOBAL":
+            return True
+        if rule.target_type == "TEACHER":
+            return rule.target_id is None or rule.target_id == task.teacher_id
+        if rule.target_type == "COHORT":
+            return rule.target_id is None or rule.target_id in task.cohort_ids
+        if rule.target_type == "CLASSROOM":
+            return room_id is not None and (rule.target_id is None or rule.target_id == room_id)
+        return False
+
     def _is_slot_allowed_for_task(self, task: SolverTask, ts_id: int) -> Tuple[bool, str]:
-        if (task.teacher_id, ts_id) in self.hard_teacher_unavail:
-            return False, "teacher_hard_unavail"
+        t_mask = self.task_effective_mask[task.id]
+        for u_mask in self.hard_teacher_unavail.get((task.teacher_id, ts_id), []):
+            if masks_overlap(t_mask, u_mask):
+                return False, "teacher_hard_unavail"
+
+        for rule in self.policy_rules:
+            if rule.rule_type == "FORBID_SCHEDULE" and rule.target_type != "CLASSROOM":
+                if self._rule_matches_slot(rule, ts_id) and self._rule_matches_task(rule, task):
+                    return False, "policy_forbid"
 
         for w in self.locked_teacher_slots.get((task.teacher_id, ts_id), []):
             if _weeks_overlap(task.week_type, w):
@@ -183,8 +220,27 @@ class CourseScheduleSolver:
 
         if ts.is_evening:
             score -= 15
-        if (task.teacher_id, ts_id) in self.soft_teacher_unavail:
+        t_mask = self.task_effective_mask[task.id]
+        if any(masks_overlap(t_mask, u_mask) for u_mask in self.soft_teacher_unavail.get((task.teacher_id, ts_id), [])):
             score -= 25 * max(1, task.teacher_priority)
+
+        # V1.6 优化1：周期必排/偏好策略规则加分（教室级禁排给予重罚避让）
+        for rule in self.policy_rules:
+            if self._rule_matches_slot(rule, ts_id) and self._rule_matches_task(rule, task, room_id):
+                if rule.rule_type == "MUST_SCHEDULE":
+                    score += 80
+                elif rule.rule_type == "PREFER_SCHEDULE":
+                    score += 30
+                elif rule.rule_type == "FORBID_SCHEDULE":
+                    score -= 500
+
+        # V1.6 优化6：自有教室 > 公共池 > 跨院系借用教室阶梯优先级
+        if room.owner_org_id == task.org_node_id:
+            score += 10
+        elif room.sharing_policy == "PUBLIC_POOL":
+            score += 4
+        else:
+            score -= 6
 
         # V1.5 固定班普通理论课优先落在自己的固定教室
         if (
@@ -224,22 +280,23 @@ class CourseScheduleSolver:
         x: Dict[Tuple[int, int, int], cp_model.IntVar] = {}
         slack: Dict[int, cp_model.IntVar] = {}
 
-        # 按资源分桶：分别维护单周占用(week_type in {0,1})与双周占用(week_type in {0,2})
-        room_odd = defaultdict(list)
-        room_even = defaultdict(list)
-        teacher_odd = defaultdict(list)
-        teacher_even = defaultdict(list)
-        cohort_odd = defaultdict(list)
-        cohort_even = defaultdict(list)
+        # V1.6 优化2：精确周次位掩码资源分桶（支持 1-8周 / 9-16周分段复用与单双周复用，同时保持高速）
+        room_bucket: Dict[Tuple[int, int], List[Tuple[cp_model.IntVar, int]]] = defaultdict(list)
+        teacher_bucket: Dict[Tuple[int, int], List[Tuple[cp_model.IntVar, int]]] = defaultdict(list)
+        cohort_bucket: Dict[Tuple[int, int], List[Tuple[cp_model.IntVar, int]]] = defaultdict(list)
 
         task_slot_vars: Dict[Tuple[int, int], List[cp_model.IntVar]] = defaultdict(list)
         task_day_vars: Dict[Tuple[int, int], List[cp_model.IntVar]] = defaultdict(list)
+        task_day_period_vars: Dict[Tuple[int, int, int], List[cp_model.IntVar]] = defaultdict(list)
+        cohort_day_vars: Dict[Tuple[int, int], List[cp_model.IntVar]] = defaultdict(list)
+        teacher_day_vars: Dict[Tuple[int, int], List[cp_model.IntVar]] = defaultdict(list)
         teacher_slot_campus: Dict[Tuple[int, int, int], List[cp_model.IntVar]] = defaultdict(list)
 
         objective_terms = []
 
         for task in self.data.tasks:
             pairs = candidates[task.id]
+            t_mask = self.task_effective_mask[task.id]
             task_vars = []
             for ts_id, room_id in pairs:
                 var = model.NewBoolVar(f"x_t{task.id}_s{ts_id}_r{room_id}")
@@ -247,20 +304,18 @@ class CourseScheduleSolver:
                 task_vars.append(var)
 
                 task_slot_vars[(task.id, ts_id)].append(var)
-                day = self.timeslot_by_id[ts_id].day_of_week
+                ts_obj = self.timeslot_by_id[ts_id]
+                day = ts_obj.day_of_week
                 task_day_vars[(task.id, day)].append(var)
+                task_day_period_vars[(task.id, day, ts_obj.period_index)].append(var)
+                teacher_day_vars[(task.teacher_id, day)].append(var)
+                for cid in task.cohort_ids:
+                    cohort_day_vars[(cid, day)].append(var)
 
-                # 单双周复用约束分桶
-                if task.week_type in (0, 1):
-                    room_odd[(room_id, ts_id)].append(var)
-                    teacher_odd[(task.teacher_id, ts_id)].append(var)
-                    for cid in task.cohort_ids:
-                        cohort_odd[(cid, ts_id)].append(var)
-                if task.week_type in (0, 2):
-                    room_even[(room_id, ts_id)].append(var)
-                    teacher_even[(task.teacher_id, ts_id)].append(var)
-                    for cid in task.cohort_ids:
-                        cohort_even[(cid, ts_id)].append(var)
+                room_bucket[(room_id, ts_id)].append((var, t_mask))
+                teacher_bucket[(task.teacher_id, ts_id)].append((var, t_mask))
+                for cid in task.cohort_ids:
+                    cohort_bucket[(cid, ts_id)].append((var, t_mask))
 
                 # 跨校区通勤追踪（仅当教室已溯源到校区边界时）
                 campus_id = self.room_by_id[room_id].campus_boundary_id
@@ -274,7 +329,6 @@ class CourseScheduleSolver:
                 s_var = model.NewIntVar(0, task.weekly_sessions, f"slack_t{task.id}")
                 slack[task.id] = s_var
                 model.Add(sum(task_vars) + s_var == task.weekly_sessions)
-                # 极大惩罚，保证优先尽量排满所有课程
                 objective_terms.append(-100000 * s_var)
             else:
                 model.Add(sum(task_vars) == task.weekly_sessions)
@@ -284,19 +338,68 @@ class CourseScheduleSolver:
                 if tid == task.id and len(vlist) > 1:
                     model.Add(sum(vlist) <= 1)
 
-            # 3. 同一任务尽量不排在同一天多次（当天数足够时作为硬约束）
-            available_days = {self.timeslot_by_id[ts_id].day_of_week for ts_id, _ in pairs}
-            if len(available_days) >= task.weekly_sessions:
+            # 3. 同一任务尽量不排在同一天多次（连堂偏好任务允许同天相邻 2 节）
+            available_days = sorted({self.timeslot_by_id[ts_id].day_of_week for ts_id, _ in pairs})
+            if not task.prefer_consecutive and len(available_days) >= task.weekly_sessions:
                 for d in available_days:
                     vlist = task_day_vars.get((task.id, d), [])
                     if len(vlist) > 1:
                         model.Add(sum(vlist) <= 1)
 
-        # 4. 教室、教师、行政班单双周唯一性硬约束
-        for bucket in (room_odd, room_even, teacher_odd, teacher_even, cohort_odd, cohort_even):
-            for vlist in bucket.values():
-                if len(vlist) > 1:
-                    model.Add(sum(vlist) <= 1)
+            # V1.6 优化4a：多节次普通课程“隔天分布”软约束（相邻两天连续排同一门课扣分）
+            if not task.prefer_consecutive and task.weekly_sessions >= 2 and len(available_days) >= 3:
+                for d in available_days:
+                    v1 = task_day_vars.get((task.id, d), [])
+                    v2 = task_day_vars.get((task.id, d + 1), [])
+                    if v1 and v2:
+                        adj = model.NewBoolVar(f"adj_t{task.id}_d{d}")
+                        model.Add(sum(v1) + sum(v2) - 1 <= adj)
+                        objective_terms.append(-12 * adj)
+
+            # V1.6 优化4b：实验/上机连堂偏好（同天相邻大节排课加分）
+            if task.prefer_consecutive and task.weekly_sessions >= 2:
+                for d in available_days:
+                    for p_idx in range(1, 5):
+                        v1 = task_day_period_vars.get((task.id, d, p_idx), [])
+                        v2 = task_day_period_vars.get((task.id, d, p_idx + 1), [])
+                        if v1 and v2:
+                            consec = model.NewBoolVar(f"consec_t{task.id}_d{d}_p{p_idx}")
+                            model.Add(consec <= sum(v1))
+                            model.Add(consec <= sum(v2))
+                            objective_terms.append(22 * consec)
+
+        # 4. V1.6 优化2：教室、教师、行政班按精确 week_mask 互斥（同掩码快速合并，分段掩码按活跃周位隔离）
+        for bucket in (room_bucket, teacher_bucket, cohort_bucket):
+            for items in bucket.values():
+                if len(items) <= 1:
+                    continue
+                unique_masks = {m for _, m in items}
+                if len(unique_masks) == 1:
+                    model.Add(sum(v for v, _ in items) <= 1)
+                else:
+                    # 仅对有 ≥2 个变量覆盖的周位建立互斥，去重相同变量子集避免冗余约束
+                    seen_sets = set()
+                    union_m = 0
+                    for m in unique_masks:
+                        union_m |= m
+                    for w in mask_to_weeks(union_m):
+                        bit = 1 << (w - 1)
+                        active_idx = tuple(i for i, (_, m) in enumerate(items) if (m & bit) != 0)
+                        if len(active_idx) > 1 and active_idx not in seen_sets:
+                            seen_sets.add(active_idx)
+                            model.Add(sum(items[i][0] for i in active_idx) <= 1)
+
+        # V1.6 优化5：班级与教师单日课表均衡（超过 3 大节逐步扣分，防止旱涝不均）
+        for key, vlist in cohort_day_vars.items():
+            if len(vlist) > 3:
+                excess = model.NewIntVar(0, len(vlist), f"cex_c{key[0]}_d{key[1]}")
+                model.Add(excess >= sum(vlist) - 3)
+                objective_terms.append(-15 * excess)
+        for key, vlist in teacher_day_vars.items():
+            if len(vlist) > 3:
+                excess = model.NewIntVar(0, len(vlist), f"tex_u{key[0]}_d{key[1]}")
+                model.Add(excess >= sum(vlist) - 3)
+                objective_terms.append(-15 * excess)
 
         # 5. 跨校区相邻节次通勤熔断硬约束
         slot_by_day_period: Dict[Tuple[int, int], int] = {
