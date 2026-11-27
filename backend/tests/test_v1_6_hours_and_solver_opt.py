@@ -167,5 +167,5 @@ def test_v1_6_api_total_hours_and_locked_task_avoidance(client_and_db):
     res = client.post("/api/v1/solver/one-click", json={"semester_id": sem.id, "org_node_id": dept.id})
     assert res.status_code == 200
     assert res.json()["scheduled_count"] == 1
-    new_det = db.query(ScheduleDetail).filter(ScheduleDetail.plan_id == res.json()["plan_id"]).first()
+    new_det = db.query(ScheduleDetail).filter(ScheduleDetail.plan_id == res.json()["plan_id"], ScheduleDetail.task_id == free_task.id).first()
     assert new_det.timeslot_id == ts2.id
