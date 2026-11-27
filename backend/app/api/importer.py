@@ -2,7 +2,7 @@
 from typing import Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, File, Query, UploadFile
+from fastapi import HTTPException, APIRouter, File, Query, UploadFile
 from fastapi.responses import Response
 
 from app.importer.excel_gateway import (

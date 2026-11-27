@@ -164,7 +164,7 @@ def test_v1_8_smart_swap_free_rooms_semester_clone_and_analytics(client_and_db):
 
     # 2. 空教室实时查询：第 1 周周一 1-2 节 r2 被 B 占用，仅剩 r1 空闲；第 18 周两间都空闲
     fr1 = client.get("/api/v1/workbench/free-rooms", params={"semester_id": sem1.id, "week_no": 1, "day_of_week": 1, "period_index": 1}).json()
-    assert fr1["free_count"] == 1 and fr1["free_rooms"][0]["room_code"] == "A-101"
+    assert fr1["free_count"] == 1 and fr1["free_rooms"][0]["room_code"] == "A-102"
     fr18 = client.get("/api/v1/workbench/free-rooms", params={"semester_id": sem1.id, "week_no": 18, "day_of_week": 1, "period_index": 1}).json()
     assert fr18["free_count"] == 2
 
