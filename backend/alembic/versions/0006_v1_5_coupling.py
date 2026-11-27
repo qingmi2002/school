@@ -51,6 +51,18 @@ def upgrade() -> None:
     if "required_room_type" not in tt_cols:
         op.add_column("teaching_task", sa.Column("required_room_type", sa.String(length=24), nullable=True))
 
+    if bind.dialect.name == "postgresql":
+        op.execute("ALTER TABLE sys_user DROP CONSTRAINT IF EXISTS ck_sys_user_role")
+        op.execute(
+            "ALTER TABLE sys_user ADD CONSTRAINT ck_sys_user_role "
+            "CHECK (role_code IN ('SUPER_ADMIN', 'COLLEGE_SCHEDULER', 'DEPT_SCHEDULER', 'MAJOR_SCHEDULER', 'LAB_ADMIN', 'TEACHING_LEAD', 'TEACHER', 'STUDENT'))"
+        )
+        op.execute("ALTER TABLE classroom DROP CONSTRAINT IF EXISTS ck_classroom_type")
+        op.execute(
+            "ALTER TABLE classroom ADD CONSTRAINT ck_classroom_type "
+            "CHECK (room_type IN ('NORMAL', 'COMPUTER_LAB', 'NETWORK_LAB', 'TRAINING_ROOM', 'LECTURE_HALL', 'SPORTS'))"
+        )
+
 
 def downgrade() -> None:
     pass

@@ -89,7 +89,7 @@ class SysUser(Base):
     __tablename__ = "sys_user"
     __table_args__ = (
         CheckConstraint(
-            "role_code IN ('SUPER_ADMIN', 'COLLEGE_SCHEDULER', 'DEPT_SCHEDULER', 'MAJOR_SCHEDULER', 'LAB_ADMIN', 'TEACHER', 'STUDENT')",
+            "role_code IN ('SUPER_ADMIN', 'COLLEGE_SCHEDULER', 'DEPT_SCHEDULER', 'MAJOR_SCHEDULER', 'LAB_ADMIN', 'TEACHING_LEAD', 'TEACHER', 'STUDENT')",
             name="ck_sys_user_role",
         ),
     )
@@ -183,7 +183,7 @@ class Classroom(Base):
     __tablename__ = "classroom"
     __table_args__ = (
         CheckConstraint("capacity > 0", name="ck_classroom_capacity"),
-        CheckConstraint("room_type IN ('NORMAL', 'COMPUTER_LAB', 'NETWORK_LAB', 'TRAINING_ROOM', 'SPORTS')", name="ck_classroom_type"),
+        CheckConstraint("room_type IN ('NORMAL', 'COMPUTER_LAB', 'NETWORK_LAB', 'TRAINING_ROOM', 'LECTURE_HALL', 'SPORTS')", name="ck_classroom_type"),
         CheckConstraint("sharing_policy IN ('EXCLUSIVE', 'IDLE_BORROW', 'PUBLIC_POOL')", name="ck_classroom_sharing_policy"),
         CheckConstraint("usage_mode IN ('FIXED', 'FLOATING')", name="ck_classroom_usage_mode"),
     )
