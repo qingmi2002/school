@@ -141,6 +141,8 @@ class TeacherCreate(BaseModel):
     username: str
     real_name: str
     org_node_id: int
+    role_code: str = "TEACHER"
+    teacher_priority: int = 1
     password: str = "123456"
 
 
@@ -149,28 +151,31 @@ class TeacherOut(BaseModel):
     username: str
     real_name: str
     org_node_id: int
+    role_code: str = "TEACHER"
+    teacher_priority: int = 1
 
 
 @router.get("/teachers", response_model=List[TeacherOut])
 def list_teachers(org_node_id: Optional[int] = Query(None), db: Session = Depends(get_db)):
-    q = db.query(SysUser).filter(SysUser.role_code == "TEACHER", SysUser.is_active.is_(True))
+    q = db.query(SysUser).filter(SysUser.role_code.in_(["TEACHER", "TEACHING_LEAD"]), SysUser.is_active.is_(True))
     if org_node_id is not None:
         q = q.filter(SysUser.org_node_id == org_node_id)
-    return [TeacherOut(id=u.id, username=u.username, real_name=u.real_name, org_node_id=u.org_node_id) for u in q.order_by(SysUser.id).all()]
+    return [TeacherOut(id=u.id, username=u.username, real_name=u.real_name, org_node_id=u.org_node_id, role_code=u.role_code, teacher_priority=int(getattr(u, "teacher_priority", 1) or 1)) for u in q.order_by(SysUser.id).all()]
 
 
 @router.post("/teachers", response_model=TeacherOut)
 def create_teacher(payload: TeacherCreate, db: Session = Depends(get_db)):
-    u = SysUser(username=payload.username, real_name=payload.real_name, org_node_id=payload.org_node_id, role_code="TEACHER", password_hash=hash_password(payload.password))
+    role = payload.role_code if payload.role_code in ("TEACHER", "TEACHING_LEAD") else "TEACHER"
+    u = SysUser(username=payload.username, real_name=payload.real_name, org_node_id=payload.org_node_id, role_code=role, teacher_priority=payload.teacher_priority, password_hash=hash_password(payload.password))
     db.add(u)
     db.commit()
     db.refresh(u)
-    return TeacherOut(id=u.id, username=u.username, real_name=u.real_name, org_node_id=u.org_node_id)
+    return TeacherOut(id=u.id, username=u.username, real_name=u.real_name, org_node_id=u.org_node_id, role_code=u.role_code, teacher_priority=int(getattr(u, "teacher_priority", 1) or 1))
 
 
 @router.delete("/teachers/{teacher_id}")
 def delete_teacher(teacher_id: int, db: Session = Depends(get_db)):
-    u = db.query(SysUser).filter(SysUser.id == teacher_id, SysUser.role_code == "TEACHER").first()
+    u = db.query(SysUser).filter(SysUser.id == teacher_id, SysUser.role_code.in_(["TEACHER", "TEACHING_LEAD"])).first()
     if u is None:
         raise HTTPException(status_code=404, detail="教师不存在")
     u.is_active = False

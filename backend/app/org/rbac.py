@@ -10,6 +10,7 @@ ROLE_LABELS: Dict[str, str] = {
     "DEPT_SCHEDULER": "系级排课管理员",
     "MAJOR_SCHEDULER": "专业级排课管理员",
     "LAB_ADMIN": "机房/实验室管理员",
+    "TEACHING_LEAD": "教研室主任 / 课程组长",
     "TEACHER": "任课教师",
     "STUDENT": "在校学生",
 }
@@ -24,6 +25,8 @@ def get_role_permissions(role_code: str) -> List[str]:
         return ["DASHBOARD", "ORG_TREE_VIEW", "EXCEL_SOLVER", "WORKBENCH", "ROOMS", "ARCHIVE_EXPORT", "HEALTH_CHECK"]
     if role_code == "LAB_ADMIN":
         return ["DASHBOARD", "ROOMS", "WORKBENCH_READ"]
+    if role_code == "TEACHING_LEAD":
+        return ["MY_TEACHER_SCHEDULE", "TEACHER_UNAVAILABLE", "TEACHING_LEAD_SCOPE", "CURRICULUM_MANAGE", "WORKBENCH_READ", "CHANGE_REQUEST"]
     if role_code == "TEACHER":
         return ["MY_TEACHER_SCHEDULE", "TEACHER_UNAVAILABLE", "CHANGE_REQUEST"]
     if role_code == "STUDENT":

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth import router as auth_router
 from app.api.constraints import router as constraints_router
+from app.api.curriculum import router as curriculum_router
 from app.api.exporter import router as exporter_router
 from app.api.importer import router as importer_router
 from app.api.locks import router as locks_router
@@ -35,6 +36,7 @@ app.include_router(system_router, prefix=settings.API_V1_PREFIX)
 app.include_router(org_router, prefix=settings.API_V1_PREFIX)
 app.include_router(locks_router, prefix=settings.API_V1_PREFIX)
 app.include_router(constraints_router, prefix=settings.API_V1_PREFIX)
+app.include_router(curriculum_router, prefix=settings.API_V1_PREFIX)
 app.include_router(solver_router, prefix=settings.API_V1_PREFIX)
 app.include_router(importer_router, prefix=settings.API_V1_PREFIX)
 app.include_router(validator_router, prefix=settings.API_V1_PREFIX)

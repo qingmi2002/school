@@ -30,6 +30,7 @@ def upsert_teacher_unavailable(
             timeslot_id=item.timeslot_id,
             constraint_level=item.constraint_level,
             reason=item.reason,
+            week_mask=item.week_mask,
         )
         db.add(row)
         created.append(row)

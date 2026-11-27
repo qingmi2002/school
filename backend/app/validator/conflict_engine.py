@@ -154,7 +154,13 @@ class _PlanSnapshot:
         if target_ts.is_evening:
             soft.append("目标时段为晚间课程（软约束扣分）")
 
-        # 2. 机房容量、软件环境标签、黑白名单与横向借用授权
+        # 2. 固定教室独占、机房容量、软件环境标签、黑白名单与横向借用授权
+        if getattr(target_room, 'usage_mode', 'FLOATING') == 'FIXED' and getattr(target_room, 'fixed_cohort_id', None) is not None:
+            c_ids = list(task.cohort_ids or [])
+            if not (len(c_ids) == 1 and c_ids[0] == target_room.fixed_cohort_id):
+                hard.append(f'教室 {target_room.room_code} 为固定班级教室，禁止其他班级或合班课占用')
+        if getattr(task, 'required_room_type', None) and target_room.room_type != task.required_room_type:
+            hard.append(f'课程要求教室类型为 {task.required_room_type}，当前教室 {target_room.room_code} 类型为 {target_room.room_type}')
         if target_room.capacity < task.total_students:
             hard.append(f"教室 {target_room.room_code} 容量({target_room.capacity})小于合班人数({task.total_students})")
 

@@ -13,6 +13,7 @@ from app.models import (
     RoomCourseRule,
     ScheduleDetail,
     SchedulePlan,
+    SysUser,
     TeacherUnavailable,
     TeachingTask,
     Timeslot,
@@ -84,6 +85,7 @@ def load_solver_input_from_db(
     )
 
     unavail_rows = db.query(TeacherUnavailable).filter(TeacherUnavailable.semester_id == semester_id).all()
+    teacher_prio_map = {u.id: int(getattr(u, 'teacher_priority', 1) or 1) for u in db.query(SysUser).all()}
     room_ids = {r.id for r in room_rows}
     rule_rows = (
         db.query(RoomCourseRule).filter(RoomCourseRule.classroom_id.in_(room_ids)).all()
@@ -112,6 +114,8 @@ def load_solver_input_from_db(
                 campus_boundary_id=resolve_campus_boundary_id(node_map, r.owner_org_id),
                 capacity=r.capacity,
                 room_type=r.room_type,
+                usage_mode=getattr(r, 'usage_mode', 'FLOATING') or 'FLOATING',
+                fixed_cohort_id=getattr(r, 'fixed_cohort_id', None),
                 env_tags=list(r.env_tags or []),
             )
             for r in room_rows
@@ -128,6 +132,8 @@ def load_solver_input_from_db(
                 weekly_sessions=t.weekly_sessions,
                 week_type=t.week_type,
                 total_students=t.total_students,
+                required_room_type=getattr(t, 'required_room_type', None),
+                teacher_priority=teacher_prio_map.get(t.teacher_id, 1),
                 required_env_tags=list(t.required_env_tags or []),
             )
             for t in task_rows

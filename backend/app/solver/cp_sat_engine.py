@@ -66,6 +66,16 @@ class CourseScheduleSolver:
                 self.locked_teacher_slots[(lock.teacher_id, lock.timeslot_id)].append(lock.week_type)
 
     def _is_room_compatible(self, task: SolverTask, room: SolverRoom) -> Tuple[bool, str]:
+        # V1.5 硬约束1：固定班级教室绝对独占（其他班级或合班任务禁止占用）
+        if room.usage_mode == "FIXED" and room.fixed_cohort_id is not None:
+            if not (len(task.cohort_ids) == 1 and task.cohort_ids[0] == room.fixed_cohort_id):
+                return False, "fixed_room_exclusive"
+
+        # V1.5 硬约束2：显式指定教室类型硬匹配（机房/普通教室/阶梯教室分离）
+        if task.required_room_type:
+            if room.room_type != task.required_room_type:
+                return False, "room_type"
+
         if room.capacity < task.total_students:
             return False, "capacity"
 
@@ -174,7 +184,17 @@ class CourseScheduleSolver:
         if ts.is_evening:
             score -= 15
         if (task.teacher_id, ts_id) in self.soft_teacher_unavail:
-            score -= 25
+            score -= 25 * max(1, task.teacher_priority)
+
+        # V1.5 固定班普通理论课优先落在自己的固定教室
+        if (
+            room.usage_mode == "FIXED"
+            and room.fixed_cohort_id is not None
+            and len(task.cohort_ids) == 1
+            and task.cohort_ids[0] == room.fixed_cohort_id
+            and task.course_category == "THEORY"
+        ):
+            score += 18
 
         # 场地类型适配加分
         is_lab_room = room.room_type in ("COMPUTER_LAB", "NETWORK_LAB", "TRAINING_ROOM")

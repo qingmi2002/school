@@ -17,7 +17,9 @@ class SolverRoom(BaseModel):
     owner_org_id: int
     campus_boundary_id: Optional[int] = None
     capacity: int
-    room_type: str = "NORMAL"  # NORMAL / COMPUTER_LAB / NETWORK_LAB / TRAINING_ROOM / SPORTS
+    room_type: str = "NORMAL"  # NORMAL / COMPUTER_LAB / NETWORK_LAB / TRAINING_ROOM / LECTURE_HALL / SPORTS
+    usage_mode: str = "FLOATING"  # FIXED 固定班级独占 / FLOATING 流动教室(支持合班)
+    fixed_cohort_id: Optional[int] = None
     env_tags: List[str] = Field(default_factory=list)
 
 
@@ -32,6 +34,8 @@ class SolverTask(BaseModel):
     weekly_sessions: int = 1
     week_type: int = 0  # 0=全周, 1=单周, 2=双周
     total_students: int = 30
+    required_room_type: Optional[str] = None
+    teacher_priority: int = 1  # 1普通 2骨干/教授 3外聘高优
     required_env_tags: List[str] = Field(default_factory=list)
 
 

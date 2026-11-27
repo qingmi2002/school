@@ -92,3 +92,19 @@ def get_current_user(
     if user is None:
         raise HTTPException(status_code=401, detail="用户不存在或已被停用")
     return user
+
+
+def get_optional_current_user(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+) -> Optional[SysUser]:
+    """可选鉴权依赖：前端带 JWT 时严格校验身份，兼容无 Token 的内部/单元调用。"""
+    if creds is None:
+        return None
+    payload = decode_access_token(creds.credentials)
+    if payload is None:
+        raise HTTPException(status_code=401, detail="登录凭证无效或已过期，请重新登录")
+    user = db.query(SysUser).filter(SysUser.id == int(payload["sub"]), SysUser.is_active.is_(True)).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="用户不存在或已被停用")
+    return user

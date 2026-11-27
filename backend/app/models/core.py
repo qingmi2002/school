@@ -100,6 +100,7 @@ class SysUser(Base):
     org_node_id: Mapped[int] = mapped_column(Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False)
     cohort_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("student_cohort.id", ondelete="SET NULL"), nullable=True)
     role_code: Mapped[str] = mapped_column(String(30), nullable=False)
+    teacher_priority: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)  # V1.5: 1普通 2骨干/教授 3外聘高优
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
@@ -201,6 +202,22 @@ class Classroom(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
+
+class Course(Base):
+    """V1.5 课程主数据表：定义课程代码、类别、默认所需教室类型及是否允许合班上课。"""
+    __tablename__ = "course"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_org_id: Mapped[int] = mapped_column(Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False)
+    course_code: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
+    course_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    course_category: Mapped[str] = mapped_column(String(20), default="THEORY", nullable=False)
+    required_room_type: Mapped[str] = mapped_column(String(24), default="NORMAL", nullable=False)
+    default_weekly_sessions: Mapped[int] = mapped_column(SmallInteger, default=2, nullable=False)
+    allow_combined: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
 class TeachingTask(Base):
     __tablename__ = "teaching_task"
     __table_args__ = (
@@ -214,6 +231,7 @@ class TeachingTask(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     semester_id: Mapped[int] = mapped_column(Integer, ForeignKey("semester.id", ondelete="RESTRICT"), nullable=False)
     org_node_id: Mapped[int] = mapped_column(Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False)
+    course_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("course.id", ondelete="SET NULL"), nullable=True)
     course_code: Mapped[str] = mapped_column(String(40), nullable=False)
     course_name: Mapped[str] = mapped_column(String(120), nullable=False)
     course_category: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -226,6 +244,7 @@ class TeachingTask(Base):
     end_week: Mapped[int] = mapped_column(SmallInteger, default=18, nullable=False)
     week_mask: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # V1.4 精确周次位掩码
     total_students: Mapped[int] = mapped_column(Integer, nullable=False)
+    required_room_type: Mapped[Optional[str]] = mapped_column(String(24), nullable=True)
     required_env_tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
@@ -259,6 +278,7 @@ class TeacherUnavailable(Base):
     timeslot_id: Mapped[int] = mapped_column(Integer, ForeignKey("timeslot.id", ondelete="CASCADE"), nullable=False)
     constraint_level: Mapped[str] = mapped_column(String(10), default="HARD", nullable=False)
     reason: Mapped[Optional[str]] = mapped_column(String(120))
+    week_mask: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
 class RoomCourseRule(Base):

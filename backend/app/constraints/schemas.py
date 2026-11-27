@@ -7,6 +7,7 @@ class TeacherUnavailableSlotIn(BaseModel):
     timeslot_id: int
     constraint_level: Literal["HARD", "SOFT"] = "HARD"
     reason: Optional[str] = None
+    week_mask: Optional[int] = None
 
 
 class TeacherUnavailableBatchUpsert(BaseModel):
@@ -22,6 +23,7 @@ class TeacherUnavailableSlotOut(BaseModel):
     timeslot_id: int
     constraint_level: str
     reason: Optional[str]
+    week_mask: Optional[int] = None
 
 
 class RoomPolicyUpdate(BaseModel):
