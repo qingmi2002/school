@@ -11,7 +11,10 @@
               指定合班合并（已选 {{ selectedTaskIds.length }}）
             </el-button>
           </div>
-          <el-button size="small" type="primary" @click="taskDialog = true">+ 新增班级选课 / 合班任务</el-button>
+          <div style="display: flex; gap: 8px">
+            <el-button size="small" @click="cloneDialog = true">从历史学期复用</el-button>
+            <el-button size="small" type="primary" @click="taskDialog = true">+ 新增班级选课 / 合班任务</el-button>
+          </div>
         </div>
 
         <el-table :data="tasks" size="small" border stripe @selection-change="onSelectionChange">
@@ -177,6 +180,25 @@
         <el-button size="small" type="primary" @click="handleCreateCourse">保存课程</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="cloneDialog" title="从历史学期一键复用开课任务" width="420px">
+      <el-form label-width="90px" size="small">
+        <el-form-item label="源学期">
+          <el-select v-model="cloneForm.sourceId" style="width: 100%">
+            <el-option v-for="s in semesters" :key="s.id" :label="s.name" :value="s.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="目标学期">
+          <el-select v-model="cloneForm.targetId" style="width: 100%">
+            <el-option v-for="s in semesters" :key="s.id" :label="s.name" :value="s.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button size="small" @click="cloneDialog = false">取消</el-button>
+        <el-button size="small" type="primary" @click="handleCloneSemester">开始复用</el-button>
+      </template>
+    </el-dialog>
   </el-card>
 </template>
 
@@ -185,6 +207,7 @@ import { onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import {
   apiClient,
+  cloneSemesterTasks,
   createCourse,
   createTeachingTask,
   deleteCourse,
@@ -209,6 +232,9 @@ const selectedTaskIds = ref<number[]>([]);
 
 const taskDialog = ref(false);
 const courseDialog = ref(false);
+const cloneDialog = ref(false);
+const semesters = ref<Array<{ id: number; name: string }>>([]);
+const cloneForm = reactive({ sourceId: undefined as number | undefined, targetId: undefined as number | undefined });
 
 const taskForm = reactive({
   course_id: undefined as number | undefined,
@@ -261,6 +287,8 @@ async function loadAll() {
   courses.value = cList;
   cohorts.value = cohortRes.data;
   teachers.value = teacherRes.data;
+  const semRes = await apiClient.get('/resources/semesters');
+  semesters.value = semRes.data || [];
   await loadTasks();
 }
 
@@ -320,6 +348,21 @@ async function handleDeleteTask(id: number) {
   await deleteTeachingTask(id);
   ElMessage.success("已删除任务");
   await loadTasks();
+}
+
+async function handleCloneSemester() {
+  if (!cloneForm.sourceId || !cloneForm.targetId) {
+    ElMessage.warning('请选择源学期和目标学期');
+    return;
+  }
+  try {
+    const r = await cloneSemesterTasks(cloneForm.sourceId, cloneForm.targetId);
+    ElMessage.success(`复用完成：新增 ${r.cloned_count} 条，跳过重复 ${r.skipped_count} 条`);
+    cloneDialog.value = false;
+    await loadTasks();
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail || '复用失败');
+  }
 }
 
 onMounted(loadAll);

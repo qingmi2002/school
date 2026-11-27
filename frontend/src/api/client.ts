@@ -490,3 +490,91 @@ export async function changeMyPassword(oldPassword: string, newPassword: string)
   });
   return data;
 }
+
+export interface FreeRoomItem {
+  id: number;
+  room_code: string;
+  building: string;
+  capacity: number;
+  room_type: string;
+  usage_mode: string;
+  fixed_cohort_name?: string | null;
+  sharing_policy: string;
+}
+
+export interface FreeRoomsResponse {
+  week_no: number;
+  day_of_week: number;
+  period_index: number;
+  total_rooms: number;
+  occupied_count: number;
+  free_count: number;
+  free_rooms: FreeRoomItem[];
+}
+
+export interface PlanAnalyticsResponse {
+  plan_id: number;
+  plan_name: string;
+  is_published: boolean;
+  total_tasks: number;
+  scheduled_sessions: number;
+  completion_rate: number;
+  avg_room_utilization: number;
+  evening_sessions_count: number;
+  combined_sessions_count: number;
+  manual_adjusted_count: number;
+  room_utilization: Array<{
+    room_id: number;
+    room_code: string;
+    building: string;
+    room_type: string;
+    used_slots: number;
+    utilization_pct: number;
+  }>;
+  master_matrix: Array<{
+    cohort_id: number;
+    cohort_name: string;
+    student_count: number;
+    slots: Record<string, string>;
+  }>;
+}
+
+export async function executeSmartSwap(payload: {
+  plan_id: number;
+  detail_id_a: number;
+  detail_id_b: number;
+  scope: "SINGLE_DEPT" | "SCHOOL_WIDE";
+}) {
+  const { data } = await apiClient.post<{
+    swapped: boolean;
+    light: string;
+    elapsed_ms: number;
+    hard_conflicts: string[];
+    soft_warnings: string[];
+  }>("/validator/swap", payload);
+  return data;
+}
+
+export async function queryFreeRooms(params: {
+  week_no: number;
+  day_of_week: number;
+  period_index: number;
+  room_type?: string;
+  min_capacity?: number;
+}): Promise<FreeRoomsResponse> {
+  const { data } = await apiClient.get<FreeRoomsResponse>("/workbench/free-rooms", { params });
+  return data;
+}
+
+export async function fetchPlanAnalytics(planId: number): Promise<PlanAnalyticsResponse> {
+  const { data } = await apiClient.get<PlanAnalyticsResponse>(`/workbench/plans/${planId}/analytics`);
+  return data;
+}
+
+export async function cloneSemesterTasks(sourceSemesterId: number, targetSemesterId: number) {
+  const { data } = await apiClient.post<{ cloned_count: number; skipped_count: number }>(
+    "/curriculum/tasks/clone-semester",
+    { source_semester_id: sourceSemesterId, target_semester_id: targetSemesterId }
+  );
+  return data;
+}
