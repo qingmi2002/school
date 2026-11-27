@@ -95,4 +95,4 @@ app.include_router(exporter_router, prefix=settings.API_V1_PREFIX)
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "version": settings.APP_VERSION, "auth_enforced": settings.ENFORCE_API_AUTH}
+    return {"status": "ok", "mode": "multi-level-flexible", "version": settings.APP_VERSION, "auth_enforced": settings.ENFORCE_API_AUTH}

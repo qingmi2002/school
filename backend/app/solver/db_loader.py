@@ -250,7 +250,7 @@ def load_solver_input_from_db(
                 rule_type=pr.rule_type,
                 day_of_week=pr.day_of_week,
                 period_index=pr.period_index,
-                priority=pr.priority,
+                priority=int(getattr(pr, "priority", 10) or 10),
             )
             for pr in policy_rows
         ],
