@@ -94,6 +94,7 @@ export interface TeacherUnavailableSlotPayload {
   timeslot_id: number;
   constraint_level: ConstraintLevel;
   reason?: string;
+  week_mask?: number;
 }
 
 export interface RoomRuleItem {
@@ -451,5 +452,41 @@ export async function triggerOneClickSolve(payload: {
     scheduled_count: number;
     unscheduled_count: number;
   }>("/solver/one-click", payload);
+  return data;
+}
+
+export interface SchedulePlanSummary {
+  id: number;
+  semester_id: number;
+  org_node_id: number;
+  plan_name: string;
+  version_tag: string;
+  run_mode: string;
+  fitness_score: number;
+  is_published: boolean;
+}
+
+export async function fetchSchedulePlans(semesterId?: number): Promise<SchedulePlanSummary[]> {
+  const { data } = await apiClient.get<SchedulePlanSummary[]>("/workbench/plans", {
+    params: semesterId ? { semester_id: semesterId } : undefined,
+  });
+  return data;
+}
+
+export async function publishSchedulePlan(planId: number) {
+  const { data } = await apiClient.post(`/workbench/plans/${planId}/publish`);
+  return data;
+}
+
+export async function toggleTaskLock(taskId: number, isLocked: boolean) {
+  const { data } = await apiClient.patch(`/workbench/tasks/${taskId}/lock`, { is_locked: isLocked });
+  return data;
+}
+
+export async function changeMyPassword(oldPassword: string, newPassword: string) {
+  const { data } = await apiClient.post("/auth/change-password", {
+    old_password: oldPassword,
+    new_password: newPassword,
+  });
   return data;
 }

@@ -80,10 +80,22 @@
       </table>
     </div>
 
-    <div class="reason-row">
+    <div class="reason-row" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap">
+      <el-radio-group v-model="weekRangeMode" size="small">
+        <el-radio-button value="ALL">全学期生效</el-radio-button>
+        <el-radio-button value="RANGE">指定周次生效</el-radio-button>
+      </el-radio-group>
+      <template v-if="weekRangeMode === 'RANGE'">
+        <el-input-number v-model="startWeek" :min="1" :max="24" size="small" style="width: 90px" />
+        <span>至</span>
+        <el-input-number v-model="endWeek" :min="1" :max="24" size="small" style="width: 90px" />
+        <span>周</span>
+      </template>
       <el-input
         v-model="reason"
-        placeholder="选填禁排原因（如：教研室例会、跨校区通勤、科研项目）"
+        style="flex: 1; min-width: 220px"
+        size="small"
+        placeholder="选填禁排原因（如：教研室例会、出差调研、跨校区通勤）"
         clearable
       />
     </div>
@@ -128,6 +140,15 @@ const windowOpen = ref<boolean>(true);
 const selected = reactive<Record<number, ConstraintLevel>>({});
 const reason = ref("");
 const saving = ref(false);
+const weekRangeMode = ref<"ALL" | "RANGE">("ALL");
+const startWeek = ref(1);
+const endWeek = ref(8);
+
+function buildMask(s: number, e: number): number {
+  let m = 0;
+  for (let w = Math.max(1, s); w <= Math.min(30, e); w++) m |= 1 << (w - 1);
+  return m;
+}
 
 const isAdmin = computed(() =>
   Boolean(me.value && ["SUPER_ADMIN", "COLLEGE_SCHEDULER", "DEPT_SCHEDULER", "MAJOR_SCHEDULER"].includes(me.value.role_code))
@@ -193,10 +214,12 @@ async function handleToggleWindow(val: string | number | boolean) {
 }
 
 async function handleSubmit(): Promise<void> {
+  const computedMask = weekRangeMode.value === "RANGE" ? buildMask(startWeek.value, endWeek.value) : undefined;
   const slots: TeacherUnavailableSlotPayload[] = Object.entries(selected).map(([id, level]) => ({
     timeslot_id: Number(id),
     constraint_level: level,
     reason: reason.value || undefined,
+    week_mask: computedMask,
   }));
   saving.value = true;
   try {

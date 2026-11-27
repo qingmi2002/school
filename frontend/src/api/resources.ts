@@ -30,6 +30,8 @@ export interface TeacherItem {
   username: string;
   real_name: string;
   org_node_id: number;
+  role_code?: string;
+  teacher_priority?: number;
 }
 
 export interface CohortItem {
@@ -101,7 +103,7 @@ export const renameOrgNodeApi = async (id: number, node_name: string) =>
 export const deleteOrgNodeApi = async (id: number) => apiClient.delete(`/org/nodes/${id}`);
 
 export const getTeachers = async () => (await apiClient.get<TeacherItem[]>("/resources/teachers")).data;
-export const addTeacher = async (p: { username: string; real_name: string; org_node_id: number }) => (await apiClient.post<TeacherItem>("/resources/teachers", p)).data;
+export const addTeacher = async (p: { username: string; real_name: string; org_node_id: number; role_code?: string; teacher_priority?: number }) => (await apiClient.post<TeacherItem>("/resources/teachers", p)).data;
 export const deleteTeacher = async (id: number) => apiClient.delete(`/resources/teachers/${id}`);
 
 export const getCohorts = async () => (await apiClient.get<CohortItem[]>("/resources/cohorts")).data;

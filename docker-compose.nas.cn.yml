@@ -43,6 +43,9 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       ARCHIVE_LOCAL_ROOT: /mnt/cloud_drive/SmartSchedule_Archive
       ARCHIVE_STAGING_DIR: /app/archive_staging
+      JWT_SECRET: SmartSchedule_PleaseChange_RandomSecret_2026
+      ENFORCE_API_AUTH: "true"
+      CORS_ORIGINS: "*"
     volumes:
       - ./data/archive_staging:/app/archive_staging
       - ./cloud_archive:/mnt/cloud_drive/SmartSchedule_Archive
@@ -64,6 +67,9 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/2
       ARCHIVE_LOCAL_ROOT: /mnt/cloud_drive/SmartSchedule_Archive
       ARCHIVE_STAGING_DIR: /app/archive_staging
+      JWT_SECRET: SmartSchedule_PleaseChange_RandomSecret_2026
+      ENFORCE_API_AUTH: "true"
+      CORS_ORIGINS: "*"
     volumes:
       - ./data/archive_staging:/app/archive_staging
       - ./cloud_archive:/mnt/cloud_drive/SmartSchedule_Archive

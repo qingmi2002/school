@@ -131,6 +131,16 @@
           </el-select>
           <el-input v-else v-model="roomForm.building" placeholder="如 第一教学楼" />
         </el-form-item>
+        <el-form-item label="教室类型">
+          <el-select v-model="roomForm.room_type" style="width: 100%">
+            <el-option label="普通教室" value="NORMAL" />
+            <el-option label="计算机机房" value="COMPUTER_LAB" />
+            <el-option label="专业实验室" value="NETWORK_LAB" />
+            <el-option label="实训室" value="TRAINING_ROOM" />
+            <el-option label="阶梯/合班大教室" value="LECTURE_HALL" />
+            <el-option label="体育场地" value="SPORTS" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="座位数"><el-input-number v-model="roomForm.capacity" :min="10" :max="500" /></el-form-item>
         <el-form-item label="使用性质">
           <el-radio-group v-model="roomForm.usage_mode">
@@ -154,6 +164,19 @@
       <el-form :model="teacherForm" label-width="70px" size="small">
         <el-form-item label="工号"><el-input v-model="teacherForm.username" /></el-form-item>
         <el-form-item label="姓名"><el-input v-model="teacherForm.real_name" /></el-form-item>
+        <el-form-item label="权限级别">
+          <el-select v-model="teacherForm.role_code" style="width: 100%">
+            <el-option label="普通教师 (TEACHER)" value="TEACHER" />
+            <el-option label="教研室主任 / 课程组长 (TEACHING_LEAD)" value="TEACHING_LEAD" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="排课优先级">
+          <el-select v-model="teacherForm.teacher_priority" style="width: 100%">
+            <el-option label="1 - 普通教师" :value="1" />
+            <el-option label="2 - 骨干 / 教授" :value="2" />
+            <el-option label="3 - 外聘 / 特聘高优" :value="3" />
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button size="small" @click="teacherDialog = false">取消</el-button>
@@ -235,8 +258,8 @@ const cohortDialog = ref(false);
 const studentDialog = ref(false);
 
 const bldgForm = reactive({ building_code: "", building_name: "", floors: 5, remark: "" });
-const roomForm = reactive({ room_code: "", building: "第一教学楼", building_id: null as number | null, capacity: 60, usage_mode: "FLOATING" as "FIXED" | "FLOATING", fixed_cohort_id: null as number | null });
-const teacherForm = reactive({ username: "", real_name: "" });
+const roomForm = reactive({ room_code: "", building: "第一教学楼", building_id: null as number | null, room_type: "NORMAL", capacity: 60, usage_mode: "FLOATING" as "FIXED" | "FLOATING", fixed_cohort_id: null as number | null });
+const teacherForm = reactive({ username: "", real_name: "", role_code: "TEACHER", teacher_priority: 1 });
 const cohortForm = reactive({ cohort_code: "", cohort_name: "", grade_year: 2026, student_count: 45 });
 const studentForm = reactive({ username: "", real_name: "", cohort_id: 1 });
 
@@ -274,7 +297,7 @@ async function onSwitchUsage(row: ClassroomItem): Promise<void> {
 }
 
 async function submitRoom(): Promise<void> {
-  await addClassroom({ ...roomForm, owner_org_id: props.activeOrgId || 1, room_type: "NORMAL", sharing_policy: "IDLE_BORROW", env_tags: [] });
+  await addClassroom({ ...roomForm, owner_org_id: props.activeOrgId || 1, sharing_policy: "IDLE_BORROW", env_tags: [] });
   roomDialog.value = false;
   roomForm.room_code = "";
   ElMessage.success("教室已入库");

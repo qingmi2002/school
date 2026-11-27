@@ -28,8 +28,19 @@
           <el-tag v-if="lastCheckMs !== null" type="info" size="small">
             校验耗时 {{ lastCheckMs }} ms
           </el-tag>
+          <el-select v-if="planList.length" v-model="activePlanId" size="small" style="width: 210px" @change="switchPlan">
+            <el-option
+              v-for="p in planList"
+              :key="p.id"
+              :label="`${p.is_published ? '[已发布] ' : ''}${p.plan_name}`"
+              :value="p.id"
+            />
+          </el-select>
           <el-button type="primary" size="small" :loading="solvingOneClick" @click="handleOneClickSolve">
             一键智能排课
+          </el-button>
+          <el-button type="success" size="small" :loading="publishing" @click="handlePublishPlan">
+            正式发布
           </el-button>
           <el-button type="warning" size="small" :loading="checkingHealth" @click="handleHealthCheck">
             一键冲突体检
@@ -148,12 +159,15 @@ import { ElMessage } from "element-plus";
 import {
   applyDragMove,
   fetchMatrixLights,
+  fetchSchedulePlans,
   fetchWorkbenchView,
+  publishSchedulePlan,
   runHealthCheck,
   triggerOneClickSolve,
   type HealthCheckReport,
   type MatrixCard,
   type SlotLightResult,
+  type SchedulePlanSummary,
   type WorkbenchView,
 } from "../api/client";
 
@@ -273,12 +287,51 @@ const slotLights = reactive<Record<number, SlotLightResult>>({});
 const lastCheckMs = ref<number | null>(null);
 const checkingHealth = ref(false);
 const solvingOneClick = ref(false);
+const publishing = ref(false);
+const planList = ref<SchedulePlanSummary[]>([]);
+const activePlanId = ref<number>(1);
+
+async function loadPlanList() {
+  try {
+    planList.value = await fetchSchedulePlans();
+    if (planList.value.length && !planList.value.some((p) => p.id === activePlanId.value)) {
+      activePlanId.value = planList.value[0].id;
+    }
+  } catch {
+    // 忽略未初始化场景
+  }
+}
+
+async function switchPlan(pid: number) {
+  try {
+    const latest = await fetchWorkbenchView(pid);
+    Object.assign(view, latest);
+  } catch {
+    ElMessage.warning('加载方案失败');
+  }
+}
+
+async function handlePublishPlan() {
+  if (!view.plan_id) return;
+  publishing.value = true;
+  try {
+    await publishSchedulePlan(view.plan_id);
+    ElMessage.success('课表方案已正式发布，教师与学生端现已可见');
+    await loadPlanList();
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail || '发布失败');
+  } finally {
+    publishing.value = false;
+  }
+}
 
 async function handleOneClickSolve() {
   solvingOneClick.value = true;
   try {
     const res = await triggerOneClickSolve({ run_mode: scopeMode.value });
     ElMessage.success(`一键排课完成：已排 ${res.scheduled_count} 节，未排 ${res.unscheduled_count} 节（${res.solve_seconds}s）`);
+    activePlanId.value = res.plan_id;
+    await loadPlanList();
     const latest = await fetchWorkbenchView(res.plan_id);
     Object.assign(view, latest);
   } catch (err: any) {
@@ -424,6 +477,7 @@ async function handleHealthCheck(): Promise<void> {
 }
 
 onMounted(async () => {
+  await loadPlanList();
   try {
     const data = await fetchWorkbenchView(1);
     if (data && data.cards.length > 0) {

@@ -12,10 +12,11 @@
       <div class="h-right">
         <el-badge :is-dot="Boolean(versionInfo?.has_update)">
           <el-button size="small" link style="color: #e2e8f0" @click="upgradeDialogVisible = true">
-            {{ versionInfo?.has_update ? `新版本 ${versionInfo.latest_version}` : (versionInfo?.current_version || "v1.6.0") }}
+            {{ versionInfo?.has_update ? `新版本 ${versionInfo.latest_version}` : (versionInfo?.current_version || "v1.7.0") }}
           </el-button>
         </el-badge>
         <span class="user-info">{{ currentUser.real_name }}（{{ currentUser.role_label }}）</span>
+        <el-button size="small" link style="color: #cbd5e1" @click="pwdDialogVisible = true">改密</el-button>
         <el-button size="small" link style="color: #fca5a5" @click="handleLogout">退出</el-button>
       </div>
     </el-header>
@@ -97,12 +98,25 @@
         <el-button type="primary" size="small" @click="upgradeDialogVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="pwdDialogVisible" title="修改个人密码" width="380px">
+      <el-form label-width="76px" size="small">
+        <el-form-item label="原密码"><el-input v-model="pwdForm.oldPwd" type="password" show-password /></el-form-item>
+        <el-form-item label="新密码"><el-input v-model="pwdForm.newPwd" type="password" show-password placeholder="至少 6 位" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button size="small" @click="pwdDialogVisible = false">取消</el-button>
+        <el-button size="small" type="primary" @click="handleChangePwd">保存</el-button>
+      </template>
+    </el-dialog>
   </el-container>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
+import { ElMessage } from "element-plus";
 import {
+  changeMyPassword,
   fetchMeApi,
   fetchOrgTree,
   fetchSystemVersion,
@@ -130,6 +144,24 @@ const orgTree = ref<OrgNodeTreeItem[]>([]);
 const selectedNode = ref<OrgNodeTreeItem | null>(null);
 const versionInfo = ref<VersionInfo | null>(null);
 const upgradeDialogVisible = ref(false);
+const pwdDialogVisible = ref(false);
+const pwdForm = reactive({ oldPwd: '', newPwd: '' });
+
+async function handleChangePwd() {
+  if (pwdForm.newPwd.length < 6) {
+    ElMessage.warning('新密码至少 6 位');
+    return;
+  }
+  try {
+    await changeMyPassword(pwdForm.oldPwd, pwdForm.newPwd);
+    ElMessage.success('密码修改成功');
+    pwdDialogVisible.value = false;
+    pwdForm.oldPwd = '';
+    pwdForm.newPwd = '';
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail || '原密码错误或修改失败');
+  }
+}
 
 const isAdminRole = computed(() => {
   const r = currentUser.value?.role_code || "";
