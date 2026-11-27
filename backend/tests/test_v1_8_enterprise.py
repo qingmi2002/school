@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.week_mask import build_week_mask
 from app.db.session import Base, get_db
 from app.main import app
+from app.org import apply_org_preset
 from app.models import (
     Classroom,
     OrgNode,
@@ -61,12 +62,17 @@ def client_and_db():
 def test_v1_8_security_get_auth_idor_bruteforce_and_upload_validation(client_and_db):
     client, db = client_and_db
     # 建两个独立院系测试跨院系 IDOR 越权拦截
-    root = OrgNode(node_code="UNI", node_name="总校", node_type="UNIVERSITY", tree_path="/1/")
-    db.add(root)
-    db.flush()
-    dept_a = OrgNode(parent_id=root.id, node_code="CS", node_name="计算机系", node_type="DEPARTMENT", tree_path="/1/2/")
-    dept_b = OrgNode(parent_id=root.id, node_code="FL", node_name="外语系", node_type="DEPARTMENT", tree_path="/1/3/")
-    db.add_all([dept_a, dept_b])
+    apply_org_preset(db, "single_dept_standalone", clear_existing=True)
+    dept_a = db.query(OrgNode).first()
+    dept_b = OrgNode(
+        parent_id=dept_a.parent_id,
+        node_code="FL",
+        node_name="外语系",
+        node_type_code=dept_a.node_type_code,
+        tree_path="/99/",
+        depth=dept_a.depth,
+    )
+    db.add(dept_b)
     db.flush()
 
     admin_a = SysUser(username="admin_a", real_name="A系管理员", org_node_id=dept_a.id, role_code="DEPT_SCHEDULER", password_hash=hash_password("123456"))
@@ -113,9 +119,8 @@ def test_v1_8_security_get_auth_idor_bruteforce_and_upload_validation(client_and
 
 def test_v1_8_smart_swap_free_rooms_semester_clone_and_analytics(client_and_db):
     client, db = client_and_db
-    dept = OrgNode(node_code="CS", node_name="计算机系", node_type="DEPARTMENT", tree_path="/1/")
-    db.add(dept)
-    db.flush()
+    apply_org_preset(db, "single_dept_standalone", clear_existing=True)
+    dept = db.query(OrgNode).first()
     sem1 = Semester(code="2026-1", name="2026秋", total_weeks=18, is_current=True)
     sem2 = Semester(code="2026-2", name="2027春", total_weeks=18, is_current=False)
     db.add_all([sem1, sem2])
