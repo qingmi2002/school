@@ -1,4 +1,6 @@
 """登录鉴权、分级角色信息、教师个人课表、学生班级课表（已集成 V1.4 整周实训提示与精确周次标签）。"""
+from collections import defaultdict
+import time
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -47,9 +49,19 @@ class UserProfileOut(BaseModel):
     permissions: List[str]
 
 
+_LOGIN_FAILURES: dict[str, list[float]] = defaultdict(list)
+_LOGIN_WINDOW_SECONDS = 900
+_LOGIN_MAX_FAILURES = 5
+
+
+def reset_login_rate_limit() -> None:
+    _LOGIN_FAILURES.clear()
+
+
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    must_change_password: bool = False
     user: UserProfileOut
 
 
@@ -119,12 +131,26 @@ def login_api(req: LoginRequest, db: Session = Depends(get_db)):
     if db.query(SysUser).count() == 0:
         seed_full_demo_data(db)
 
-    user = db.query(SysUser).filter(SysUser.username == req.username, SysUser.is_active.is_(True)).first()
+    uname = req.username.strip()
+    key = uname.lower()
+    now = time.time()
+    recent = [ts for ts in _LOGIN_FAILURES.get(key, []) if now - ts < _LOGIN_WINDOW_SECONDS]
+    _LOGIN_FAILURES[key] = recent
+    if len(recent) >= _LOGIN_MAX_FAILURES:
+        raise HTTPException(status_code=429, detail="登录失败次数过多，账号已临时锁定 15 分钟")
+
+    user = db.query(SysUser).filter(SysUser.username == uname, SysUser.is_active.is_(True)).first()
     if user is None or not verify_password(req.password, user.password_hash):
+        _LOGIN_FAILURES[key].append(now)
         raise HTTPException(status_code=401, detail="工号/学号或密码错误（演示账号密码均为 123456）")
 
+    _LOGIN_FAILURES.pop(key, None)
     token = create_access_token(user.id, user.username, user.role_code, user.org_node_id)
-    return LoginResponse(access_token=token, user=_build_profile(db, user))
+    return LoginResponse(
+        access_token=token,
+        must_change_password=(req.password == "123456"),
+        user=_build_profile(db, user),
+    )
 
 
 @router.get("/me", response_model=UserProfileOut)

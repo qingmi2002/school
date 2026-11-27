@@ -2,9 +2,11 @@
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.validator.conflict_engine import execute_smart_swap
 from app.validator.conflict_engine import (
     apply_drag_move,
     check_drag_target,
@@ -57,3 +59,25 @@ def health_check_api(
     db: Session = Depends(get_db),
 ):
     return run_health_check(db, semester_id=semester_id, scope=scope, org_node_id=org_node_id)
+
+
+class SmartSwapIn(BaseModel):
+    plan_id: int
+    detail_id_a: int
+    detail_id_b: int
+    scope: str = "SINGLE_DEPT"
+
+
+@router.post("/swap")
+def smart_swap_api(payload: SmartSwapIn, db: Session = Depends(get_db)):
+    """V1.8 拖拽智能对调接口：检测双方零冲突后一键互换两门课的时间片与教室。"""
+    try:
+        return execute_smart_swap(
+            db,
+            plan_id=payload.plan_id,
+            detail_id_a=payload.detail_id_a,
+            detail_id_b=payload.detail_id_b,
+            scope=payload.scope,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))

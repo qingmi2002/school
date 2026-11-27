@@ -513,3 +513,61 @@ def run_health_check(
         elapsed_ms=elapsed_ms,
         issues=issues,
     )
+
+
+def execute_smart_swap(
+    db: Session,
+    plan_id: int,
+    detail_id_a: int,
+    detail_id_b: int,
+    scope: str = "SINGLE_DEPT",
+) -> dict:
+    """V1.8 智能对调（Swap）：同步评估 A->B 与 B->A 双方零冲突后一键互换时间片与教室。"""
+    t0 = time.perf_counter()
+    if detail_id_a == detail_id_b:
+        raise ValueError("不能对同一节课程执行对调")
+    plan = db.query(SchedulePlan).filter(SchedulePlan.id == plan_id).first()
+    if plan is None:
+        raise ValueError(f"排课方案 id={plan_id} 不存在")
+    det_a = db.query(ScheduleDetail).filter(ScheduleDetail.id == detail_id_a, ScheduleDetail.plan_id == plan_id).first()
+    det_b = db.query(ScheduleDetail).filter(ScheduleDetail.id == detail_id_b, ScheduleDetail.plan_id == plan_id).first()
+    if det_a is None or det_b is None:
+        raise ValueError("待对调的课表明细不存在")
+    task_a = db.query(TeachingTask).filter(TeachingTask.id == det_a.task_id).first()
+    task_b = db.query(TeachingTask).filter(TeachingTask.id == det_b.task_id).first()
+    if task_a is None or task_b is None:
+        raise ValueError("待对调的教学任务不存在")
+
+    snap = _PlanSnapshot(db, plan, scope=scope)
+    # 双向校验时先临时把 A 和 B 从各自旧时段桶移除，避免互相误报占用
+    old_a_ts, old_a_room = det_a.timeslot_id, det_a.classroom_id
+    old_b_ts, old_b_room = det_b.timeslot_id, det_b.classroom_id
+
+    snap.details_by_ts[old_a_ts] = [d for d in snap.details_by_ts.get(old_a_ts, []) if d.id not in (det_a.id, det_b.id)]
+    snap.details_by_ts[old_b_ts] = [d for d in snap.details_by_ts.get(old_b_ts, []) if d.id not in (det_a.id, det_b.id)]
+
+    hard_a, soft_a = snap.evaluate_slot(det_a, task_a, old_b_ts, old_b_room)
+    hard_b, soft_b = snap.evaluate_slot(det_b, task_b, old_a_ts, old_a_room)
+    all_hard = [f"[{task_a.course_name}] {m}" for m in hard_a] + [f"[{task_b.course_name}] {m}" for m in hard_b]
+    all_soft = [f"[{task_a.course_name}] {m}" for m in soft_a] + [f"[{task_b.course_name}] {m}" for m in soft_b]
+    elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
+
+    if all_hard:
+        return {
+            "swapped": False,
+            "light": "RED",
+            "elapsed_ms": elapsed_ms,
+            "hard_conflicts": all_hard,
+            "soft_warnings": all_soft,
+        }
+
+    det_a.timeslot_id, det_a.classroom_id, det_a.is_manual_adjusted = old_b_ts, old_b_room, True
+    det_b.timeslot_id, det_b.classroom_id, det_b.is_manual_adjusted = old_a_ts, old_a_room, True
+    db.commit()
+    return {
+        "swapped": True,
+        "light": "YELLOW" if all_soft else "GREEN",
+        "elapsed_ms": elapsed_ms,
+        "hard_conflicts": [],
+        "soft_warnings": all_soft,
+    }

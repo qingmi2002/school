@@ -7,7 +7,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.week_mask import build_week_mask, fit_week_mask_to_hours, mask_to_label, mask_to_weeks, weeks_to_mask
+from app.auth.security import get_optional_current_user
 from app.db.session import get_db
+from app.org.rbac import assert_org_subtree_access
 from app.models import CohortWeekPlan, Course, OrgNode, Semester, StudentCohort, SysUser, TeachingTask
 
 router = APIRouter(prefix="/curriculum", tags=["curriculum-and-tasks"])
@@ -88,7 +90,11 @@ def list_courses(owner_org_id: Optional[int] = Query(None), db: Session = Depend
 
 
 @router.post("/courses")
-def create_course(payload: CourseCreateIn, db: Session = Depends(get_db)):
+def create_course(
+    payload: CourseCreateIn,
+    db: Session = Depends(get_db),
+    current_user: Optional[SysUser] = Depends(get_optional_current_user),
+):
     exists = db.query(Course).filter(Course.course_code == payload.course_code.strip()).first()
     if exists:
         raise HTTPException(status_code=400, detail=f"课程代码 {payload.course_code} 已存在")
@@ -98,6 +104,7 @@ def create_course(payload: CourseCreateIn, db: Session = Depends(get_db)):
         if first_org is None:
             raise HTTPException(status_code=400, detail="请先创建组织节点")
         org_id = first_org.id
+    assert_org_subtree_access(db, current_user, org_id)
     row = Course(
         owner_org_id=org_id,
         course_code=payload.course_code.strip(),
@@ -193,7 +200,11 @@ def list_teaching_tasks(
 
 
 @router.post("/tasks")
-def create_teaching_task(payload: TeachingTaskCreateIn, db: Session = Depends(get_db)):
+def create_teaching_task(
+    payload: TeachingTaskCreateIn,
+    db: Session = Depends(get_db),
+    current_user: Optional[SysUser] = Depends(get_optional_current_user),
+):
     sem = (
         db.query(Semester).filter(Semester.id == payload.semester_id).first()
         if payload.semester_id
@@ -230,6 +241,7 @@ def create_teaching_task(payload: TeachingTaskCreateIn, db: Session = Depends(ge
     org_node_id = payload.org_node_id or cohorts[0].org_node_id
     sorted_cids = sorted(set(payload.cohort_ids))
 
+    assert_org_subtree_access(db, current_user, org_node_id)
     blocked_mask = _get_union_blocked_mask(db, sem.id, sorted_cids)
     eff_mask, _, _ = fit_week_mask_to_hours(
         payload.start_week, payload.end_week, payload.week_type, blocked_mask, target_hours, weekly_sessions
@@ -300,10 +312,15 @@ def merge_tasks_into_combined(payload: MergeTasksIn, db: Session = Depends(get_d
 
 
 @router.delete("/tasks/{task_id}")
-def delete_teaching_task(task_id: int, db: Session = Depends(get_db)):
+def delete_teaching_task(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: Optional[SysUser] = Depends(get_optional_current_user),
+):
     row = db.query(TeachingTask).filter(TeachingTask.id == task_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="教学任务不存在")
+    assert_org_subtree_access(db, current_user, row.org_node_id)
     db.delete(row)
     db.commit()
     return {"deleted": True, "id": task_id}
@@ -347,3 +364,74 @@ def get_teacher_workload(semester_id: Optional[int] = Query(None), db: Session =
         )
     result.sort(key=lambda x: (-x["total_semester_hours"], -x["total_weekly_sessions"], x["teacher_id"]))
     return result
+
+
+class CloneSemesterTasksIn(BaseModel):
+    source_semester_id: int
+    target_semester_id: int
+
+
+@router.post("/tasks/clone-semester")
+def clone_semester_tasks(
+    payload: CloneSemesterTasksIn,
+    db: Session = Depends(get_db),
+    current_user: Optional[SysUser] = Depends(get_optional_current_user),
+):
+    """V1.8 历史学期一键结转复用：将源学期开课任务批量克隆至目标学期（自动去重并重新适配目标学期实训周）。"""
+    if payload.source_semester_id == payload.target_semester_id:
+        raise HTTPException(status_code=400, detail="源学期与目标学期不能相同")
+    target_sem = db.query(Semester).filter(Semester.id == payload.target_semester_id).first()
+    if target_sem is None:
+        raise HTTPException(status_code=404, detail="目标学期不存在")
+
+    src_tasks = db.query(TeachingTask).filter(TeachingTask.semester_id == payload.source_semester_id).all()
+    existing_keys = {
+        (t.course_code, t.teacher_id, tuple(sorted(t.cohort_ids or [])))
+        for t in db.query(TeachingTask).filter(TeachingTask.semester_id == payload.target_semester_id).all()
+    }
+    cloned = 0
+    skipped = 0
+    for st in src_tasks:
+        if current_user is not None and current_user.role_code != "SUPER_ADMIN":
+            try:
+                assert_org_subtree_access(db, current_user, st.org_node_id)
+            except HTTPException:
+                skipped += 1
+                continue
+        cids = sorted(st.cohort_ids or [])
+        key = (st.course_code, st.teacher_id, tuple(cids))
+        if key in existing_keys:
+            skipped += 1
+            continue
+        blocked_mask = _get_union_blocked_mask(db, target_sem.id, cids)
+        eff_mask, _, _ = fit_week_mask_to_hours(
+            st.start_week, st.end_week, st.week_type, blocked_mask, st.total_hours, st.weekly_sessions
+        )
+        db.add(
+            TeachingTask(
+                semester_id=target_sem.id,
+                org_node_id=st.org_node_id,
+                course_id=st.course_id,
+                course_code=st.course_code,
+                course_name=st.course_name,
+                course_category=st.course_category,
+                course_level=st.course_level,
+                required_room_type=st.required_room_type,
+                teacher_id=st.teacher_id,
+                cohort_ids=cids,
+                weekly_sessions=st.weekly_sessions,
+                total_hours=st.total_hours,
+                prefer_consecutive=st.prefer_consecutive,
+                week_type=st.week_type,
+                start_week=st.start_week,
+                end_week=st.end_week,
+                week_mask=eff_mask,
+                total_students=st.total_students,
+                required_env_tags=list(st.required_env_tags or []),
+                is_locked=False,
+            )
+        )
+        existing_keys.add(key)
+        cloned += 1
+    db.commit()
+    return {"cloned_count": cloned, "skipped_count": skipped, "target_semester_id": target_sem.id}

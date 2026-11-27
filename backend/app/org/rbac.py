@@ -66,3 +66,20 @@ def check_org_scope_permission(
         return False, "越权操作：学生仅可查看本班课表"
 
     return False, f"未知角色 {user.role_code}"
+
+
+def assert_org_subtree_access(db, current_user, target_org_node_id: int) -> None:
+    """V1.8 跨院系越权（IDOR）防线：非超管用户仅可操作自己 tree_path 子树内的组织数据。"""
+    from fastapi import HTTPException
+
+    if current_user is None or current_user.role_code == "SUPER_ADMIN":
+        return
+    user_org = db.query(OrgNode).filter(OrgNode.id == current_user.org_node_id).first()
+    target_org = db.query(OrgNode).filter(OrgNode.id == target_org_node_id).first()
+    if user_org is None or target_org is None:
+        raise HTTPException(status_code=404, detail="目标组织节点不存在")
+    if not target_org.tree_path.startswith(user_org.tree_path):
+        raise HTTPException(
+            status_code=403,
+            detail=f"越权拦截：您无权操作非管辖子树节点（{target_org.node_name}）的数据",
+        )

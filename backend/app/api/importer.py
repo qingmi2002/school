@@ -13,6 +13,16 @@ from app.importer.excel_gateway import (
 from app.importer.schemas import ImportContext, ImportParseResult
 
 router = APIRouter(prefix="/import", tags=["excel-import"])
+MAX_EXCEL_UPLOAD_BYTES = 10 * 1024 * 1024
+
+
+def _validate_xlsx_bytes(filename: str | None, raw: bytes) -> None:
+    if filename and not filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="仅支持上传 .xlsx 格式的 Excel 文件")
+    if len(raw) > MAX_EXCEL_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="上传文件超过 10MB 安全上限")
+    if len(raw) < 4 or raw[:4] != b"PK\x03\x04":
+        raise HTTPException(status_code=400, detail="文件内容不是合法的 .xlsx 压缩文档")
 
 
 @router.get("/template/{mode}")

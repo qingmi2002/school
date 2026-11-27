@@ -409,4 +409,11 @@ def download_master_import_template():
 @router.post("/master-import/upload")
 async def upload_master_import_excel(file: UploadFile = File(...), db: Session = Depends(get_db)):
     raw = await file.read()
+    MAX_MASTER_UPLOAD_BYTES = 10 * 1024 * 1024
+    if file.filename and not file.filename.lower().endswith('.xlsx'):
+        raise HTTPException(status_code=400, detail='仅支持上传 .xlsx 文件')
+    if len(raw) > MAX_MASTER_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail='上传文件超过 10MB 上限')
+    if len(raw) < 4 or raw[:4] != b'PK\x03\x04':
+        raise HTTPException(status_code=400, detail='文件格式损坏，非有效 .xlsx')
     return import_master_data_workbook(db, raw)
