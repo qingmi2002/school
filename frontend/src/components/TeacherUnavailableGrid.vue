@@ -3,10 +3,34 @@
     <template #header>
       <div class="card-header">
         <div>
-          <div class="title">教师禁排与偏好时间填报（微信 H5 适配）</div>
+          <div class="title">教师禁排与偏好时间填报</div>
           <div class="subtitle">点击网格循环切换：空闲 → 绝对禁排（红） → 尽量不排（橙）</div>
         </div>
         <div class="actions">
+          <el-switch
+            v-if="isAdmin"
+            v-model="windowOpen"
+            active-text="开放教师自助填报"
+            inactive-text="已关闭填报"
+            style="margin-right: 8px"
+            @change="handleToggleWindow"
+          />
+          <el-select
+            v-if="canSwitchTeacher"
+            v-model="selectedTeacherId"
+            size="small"
+            placeholder="选择教师"
+            style="width: 170px"
+            @change="loadSavedGrid"
+          >
+            <el-option
+              v-for="t in teachers"
+              :key="t.id"
+              :label="`${t.real_name} (${t.role_code === 'TEACHING_LEAD' ? '教研室主任' : '教师'})`"
+              :value="t.id"
+            />
+          </el-select>
+          <el-tag v-else-if="me" size="small" type="info">{{ me.real_name }}（本人填报）</el-tag>
           <el-button size="small" @click="clearAll">清空</el-button>
           <el-button type="primary" size="small" :loading="saving" @click="handleSubmit">
             提交禁排
@@ -14,6 +38,15 @@
         </div>
       </div>
     </template>
+
+    <el-alert
+      v-if="!windowOpen && me?.role_code === 'TEACHER'"
+      type="warning"
+      title="管理员当前已关闭教师自助禁排填报窗口，如需调整请联系教研室主任或排课管理员。"
+      show-icon
+      :closable="false"
+      style="margin-bottom: 10px"
+    />
 
     <div class="legend-row">
       <span class="legend-item"><i class="dot free" /> 可排</span>
@@ -58,12 +91,17 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import {
+  apiClient,
+  fetchMeApi,
+  fetchTeacherUnavailWindow,
   saveTeacherUnavailableGrid,
+  setTeacherUnavailWindow,
   type ConstraintLevel,
   type TeacherUnavailableSlotPayload,
+  type UserProfile,
 } from "../api/client";
 
 const days = [
@@ -82,9 +120,19 @@ const periods = [
   { value: 5, label: "9-10节" },
 ];
 
+const me = ref<UserProfile | null>(null);
+const semesterId = ref<number>(1);
+const selectedTeacherId = ref<number>(1);
+const teachers = ref<Array<{ id: number; real_name: string; role_code: string }>>([]);
+const windowOpen = ref<boolean>(true);
 const selected = reactive<Record<number, ConstraintLevel>>({});
 const reason = ref("");
 const saving = ref(false);
+
+const isAdmin = computed(() =>
+  Boolean(me.value && ["SUPER_ADMIN", "COLLEGE_SCHEDULER", "DEPT_SCHEDULER", "MAJOR_SCHEDULER"].includes(me.value.role_code))
+);
+const canSwitchTeacher = computed(() => Boolean(isAdmin.value || me.value?.role_code === "TEACHING_LEAD"));
 
 function slotId(day: number, period: number): number {
   return (day - 1) * 5 + period;
@@ -119,6 +167,31 @@ function clearAll(): void {
   Object.keys(selected).forEach((k) => delete selected[Number(k)]);
 }
 
+async function loadSavedGrid() {
+  clearAll();
+  if (!selectedTeacherId.value) return;
+  try {
+    const { data } = await apiClient.get("/constraints/teacher-unavailable", {
+      params: { semester_id: semesterId.value, teacher_id: selectedTeacherId.value },
+    });
+    for (const row of data || []) {
+      selected[row.timeslot_id] = row.constraint_level as ConstraintLevel;
+      if (row.reason && !reason.value) reason.value = row.reason;
+    }
+  } catch {
+    // 忽略未初始化场景
+  }
+}
+
+async function handleToggleWindow(val: string | number | boolean) {
+  try {
+    await setTeacherUnavailWindow(Boolean(val));
+    ElMessage.success(Boolean(val) ? "已开放教师自助禁排填报" : "已关闭教师自助禁排填报");
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail || "切换窗口状态失败");
+  }
+}
+
 async function handleSubmit(): Promise<void> {
   const slots: TeacherUnavailableSlotPayload[] = Object.entries(selected).map(([id, level]) => ({
     timeslot_id: Number(id),
@@ -127,97 +200,60 @@ async function handleSubmit(): Promise<void> {
   }));
   saving.value = true;
   try {
-    await saveTeacherUnavailableGrid(1, 1, slots);
+    await saveTeacherUnavailableGrid(semesterId.value, selectedTeacherId.value, slots);
     ElMessage.success(`已提交 ${slots.length} 个禁排/偏好时段`);
-  } catch {
-    ElMessage.warning(`后端未初始化基础数据时仅作前端校验（已勾选 ${slots.length} 个时段）`);
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail || "提交失败，请检查权限或填报窗口状态");
   } finally {
     saving.value = false;
   }
 }
+
+onMounted(async () => {
+  try {
+    const [profile, semRes, winRes] = await Promise.all([
+      fetchMeApi(),
+      apiClient.get("/resources/semesters"),
+      fetchTeacherUnavailWindow(),
+    ]);
+    me.value = profile;
+    windowOpen.value = winRes.is_open;
+    const sems = semRes.data || [];
+    const cur = sems.find((s: any) => s.is_current) || sems[0];
+    if (cur) semesterId.value = cur.id;
+
+    if (canSwitchTeacher.value) {
+      const tRes = await apiClient.get("/resources/teachers");
+      teachers.value = tRes.data || [];
+      selectedTeacherId.value = teachers.value[0]?.id || profile.id;
+    } else {
+      selectedTeacherId.value = profile.id;
+    }
+    await loadSavedGrid();
+  } catch {
+    // 保留默认状态
+  }
+});
 </script>
 
 <style scoped>
-.card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-.title {
-  font-weight: 600;
-  font-size: 16px;
-}
-.subtitle {
-  font-size: 12px;
-  color: #6b7280;
-  margin-top: 2px;
-}
-.legend-row {
-  display: flex;
-  gap: 16px;
-  margin-bottom: 12px;
-  font-size: 13px;
-}
-.legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  display: inline-block;
-}
+.card-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.title { font-weight: 600; font-size: 16px; }
+.subtitle { font-size: 12px; color: #6b7280; margin-top: 2px; }
+.actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.legend-row { display: flex; gap: 16px; margin-bottom: 12px; font-size: 13px; color: #374151; }
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .dot.free { background: #e5e7eb; }
 .dot.hard { background: #ef4444; }
 .dot.soft { background: #f59e0b; }
-.matrix-scroll {
-  overflow-x: auto;
-}
-.slot-matrix {
-  width: 100%;
-  border-collapse: collapse;
-  min-width: 320px;
-}
-.slot-matrix th,
-.slot-matrix td {
-  border: 1px solid #e5e7eb;
-  padding: 6px;
-  text-align: center;
-}
-.period-col {
-  width: 72px;
-  background: #f9fafb;
-  font-size: 12px;
-  font-weight: 500;
-}
-.slot-cell {
-  width: 100%;
-  min-height: 44px;
-  border: none;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
-  transition: all 0.15s ease;
-}
-.slot-cell.is-free {
-  background: #f3f4f6;
-  color: #6b7280;
-}
-.slot-cell.is-hard {
-  background: #fee2e2;
-  color: #b91c1c;
-  font-weight: 600;
-}
-.slot-cell.is-soft {
-  background: #fef3c7;
-  color: #b45309;
-  font-weight: 600;
-}
-.reason-row {
-  margin-top: 14px;
-}
+.matrix-scroll { overflow-x: auto; }
+.slot-matrix { width: 100%; border-collapse: collapse; min-width: 520px; }
+.slot-matrix th, .slot-matrix td { border: 1px solid #e5e7eb; text-align: center; padding: 6px; }
+.period-col { width: 80px; background: #f9fafb; font-weight: 600; font-size: 13px; }
+.slot-cell { width: 100%; min-height: 44px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.15s ease; }
+.slot-cell.is-free { background: #f8fafc; color: #64748b; }
+.slot-cell.is-hard { background: #fee2e2; color: #b91c1c; }
+.slot-cell.is-soft { background: #fef3c7; color: #b45309; }
+.reason-row { margin-top: 12px; }
 </style>

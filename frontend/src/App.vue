@@ -12,7 +12,7 @@
       <div class="h-right">
         <el-badge :is-dot="Boolean(versionInfo?.has_update)">
           <el-button size="small" link style="color: #e2e8f0" @click="upgradeDialogVisible = true">
-            {{ versionInfo?.has_update ? `新版本 ${versionInfo.latest_version}` : (versionInfo?.current_version || "v1.3.0") }}
+            {{ versionInfo?.has_update ? `新版本 ${versionInfo.latest_version}` : (versionInfo?.current_version || "v1.5.0") }}
           </el-button>
         </el-badge>
         <span class="user-info">{{ currentUser.real_name }}（{{ currentUser.role_label }}）</span>
@@ -26,11 +26,19 @@
           <template v-if="isAdminRole">
             <el-menu-item index="workbench">排课工作台</el-menu-item>
             <el-menu-item index="resources">基础数据</el-menu-item>
+            <el-menu-item index="curriculum">课程与合班</el-menu-item>
+            <el-menu-item index="teacher-grid">教师禁排</el-menu-item>
             <el-menu-item index="rules">周期与规则</el-menu-item>
             <el-menu-item index="org">组织权限</el-menu-item>
             <el-menu-item index="rooms">机房规则</el-menu-item>
             <el-menu-item index="export">导入导出</el-menu-item>
             <el-menu-item v-if="currentUser.role_code === 'SUPER_ADMIN'" index="settings">系统设置</el-menu-item>
+          </template>
+          <template v-else-if="currentUser.role_code === 'TEACHING_LEAD'">
+            <el-menu-item index="my-schedule">我的课表</el-menu-item>
+            <el-menu-item index="teacher-grid">本组禁排管理</el-menu-item>
+            <el-menu-item index="curriculum">课程与合班</el-menu-item>
+            <el-menu-item index="workbench">排课工作台</el-menu-item>
           </template>
           <template v-else-if="currentUser.role_code === 'TEACHER'">
             <el-menu-item index="my-schedule">我的课表</el-menu-item>
@@ -57,6 +65,7 @@
       <el-main class="erp-main">
         <ScheduleWorkbench v-if="activeMenu === 'workbench'" />
         <ResourceManageView v-else-if="activeMenu === 'resources'" :active-org-id="selectedNode?.id || currentUser.org_node_id" />
+        <CurriculumTaskView v-else-if="activeMenu === 'curriculum'" />
         <CycleAndRuleView v-else-if="activeMenu === 'rules'" />
         <OrgPermissionView
           v-else-if="activeMenu === 'org'"
@@ -104,6 +113,7 @@ import {
 import { getSiteConfig } from "./api/resources";
 import LoginView from "./components/LoginView.vue";
 import ScheduleWorkbench from "./components/ScheduleWorkbench.vue";
+import CurriculumTaskView from "./components/CurriculumTaskView.vue";
 import ResourceManageView from "./components/ResourceManageView.vue";
 import CycleAndRuleView from "./components/CycleAndRuleView.vue";
 import OrgPermissionView from "./components/OrgPermissionView.vue";

@@ -28,6 +28,9 @@
           <el-tag v-if="lastCheckMs !== null" type="info" size="small">
             校验耗时 {{ lastCheckMs }} ms
           </el-tag>
+          <el-button type="primary" size="small" :loading="solvingOneClick" @click="handleOneClickSolve">
+            一键智能排课
+          </el-button>
           <el-button type="warning" size="small" :loading="checkingHealth" @click="handleHealthCheck">
             一键冲突体检
           </el-button>
@@ -147,6 +150,7 @@ import {
   fetchMatrixLights,
   fetchWorkbenchView,
   runHealthCheck,
+  triggerOneClickSolve,
   type HealthCheckReport,
   type MatrixCard,
   type SlotLightResult,
@@ -268,6 +272,21 @@ const hoverSlotId = ref<number | null>(null);
 const slotLights = reactive<Record<number, SlotLightResult>>({});
 const lastCheckMs = ref<number | null>(null);
 const checkingHealth = ref(false);
+const solvingOneClick = ref(false);
+
+async function handleOneClickSolve() {
+  solvingOneClick.value = true;
+  try {
+    const res = await triggerOneClickSolve({ run_mode: scopeMode.value });
+    ElMessage.success(`一键排课完成：已排 ${res.scheduled_count} 节，未排 ${res.unscheduled_count} 节（${res.solve_seconds}s）`);
+    const latest = await fetchWorkbenchView(res.plan_id);
+    Object.assign(view, latest);
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail || '一键排课失败，请检查基础数据与课程任务');
+  } finally {
+    solvingOneClick.value = false;
+  }
+}
 const healthDialogVisible = ref(false);
 const healthReport = ref<HealthCheckReport | null>(null);
 

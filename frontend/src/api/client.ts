@@ -309,3 +309,137 @@ export async function triggerArchivePlan(planId: number, vendor: string) {
   const { data } = await apiClient.post(`/export/plans/${planId}/archive`, null, { params: { vendor } });
   return data;
 }
+
+export interface CourseItem {
+  id: number;
+  owner_org_id: number;
+  course_code: string;
+  course_name: string;
+  course_category: string;
+  required_room_type: string;
+  default_weekly_sessions: number;
+  allow_combined: boolean;
+}
+
+export interface TeachingTaskItem {
+  id: number;
+  semester_id: number;
+  org_node_id: number;
+  course_id?: number | null;
+  course_code: string;
+  course_name: string;
+  course_category: string;
+  required_room_type?: string | null;
+  teacher_id: number;
+  teacher_name: string;
+  cohort_ids: number[];
+  cohort_names: string[];
+  is_combined: boolean;
+  weekly_sessions: number;
+  week_type: number;
+  start_week: number;
+  end_week: number;
+  total_students: number;
+  is_locked: boolean;
+}
+
+export interface TeacherWorkloadItem {
+  teacher_id: number;
+  teacher_name: string;
+  role_code: string;
+  teacher_priority: number;
+  task_count: number;
+  combined_task_count: number;
+  total_weekly_sessions: number;
+  courses: string[];
+  cohorts: string[];
+}
+
+export async function fetchCourses(): Promise<CourseItem[]> {
+  const { data } = await apiClient.get<CourseItem[]>("/curriculum/courses");
+  return data;
+}
+
+export async function createCourse(payload: {
+  course_code: string;
+  course_name: string;
+  course_category: string;
+  required_room_type: string;
+  default_weekly_sessions: number;
+  allow_combined: boolean;
+}): Promise<CourseItem> {
+  const { data } = await apiClient.post<CourseItem>("/curriculum/courses", payload);
+  return data;
+}
+
+export async function deleteCourse(courseId: number) {
+  await apiClient.delete(`/curriculum/courses/${courseId}`);
+}
+
+export async function fetchTeachingTasks(params?: {
+  semester_id?: number;
+  cohort_id?: number;
+  teacher_id?: number;
+}): Promise<TeachingTaskItem[]> {
+  const { data } = await apiClient.get<TeachingTaskItem[]>("/curriculum/tasks", { params });
+  return data;
+}
+
+export async function createTeachingTask(payload: {
+  semester_id?: number;
+  course_id: number;
+  teacher_id: number;
+  cohort_ids: number[];
+  required_room_type?: string;
+  weekly_sessions?: number;
+  week_type?: number;
+  start_week?: number;
+  end_week?: number;
+}): Promise<TeachingTaskItem> {
+  const { data } = await apiClient.post<TeachingTaskItem>("/curriculum/tasks", payload);
+  return data;
+}
+
+export async function mergeTeachingTasks(taskIds: number[]): Promise<TeachingTaskItem> {
+  const { data } = await apiClient.post<TeachingTaskItem>("/curriculum/tasks/merge", { task_ids: taskIds });
+  return data;
+}
+
+export async function deleteTeachingTask(taskId: number) {
+  await apiClient.delete(`/curriculum/tasks/${taskId}`);
+}
+
+export async function fetchTeacherWorkload(semesterId?: number): Promise<TeacherWorkloadItem[]> {
+  const { data } = await apiClient.get<TeacherWorkloadItem[]>("/curriculum/teacher-workload", {
+    params: semesterId ? { semester_id: semesterId } : undefined,
+  });
+  return data;
+}
+
+export async function fetchTeacherUnavailWindow(): Promise<{ is_open: boolean }> {
+  const { data } = await apiClient.get<{ is_open: boolean }>("/constraints/teacher-unavail-window");
+  return data;
+}
+
+export async function setTeacherUnavailWindow(isOpen: boolean): Promise<{ is_open: boolean }> {
+  const { data } = await apiClient.put<{ is_open: boolean }>("/constraints/teacher-unavail-window", {
+    is_open: isOpen,
+  });
+  return data;
+}
+
+export async function triggerOneClickSolve(payload: {
+  semester_id?: number;
+  org_node_id?: number;
+  run_mode?: "SINGLE_DEPT" | "SCHOOL_WIDE";
+}) {
+  const { data } = await apiClient.post<{
+    plan_id: number;
+    plan_name: string;
+    status: string;
+    solve_seconds: number;
+    scheduled_count: number;
+    unscheduled_count: number;
+  }>("/solver/one-click", payload);
+  return data;
+}
