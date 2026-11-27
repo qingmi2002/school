@@ -158,9 +158,9 @@ def test_v1_8_smart_swap_free_rooms_semester_clone_and_analytics(client_and_db):
     # 1. 智能对调（Swap）：A 与 B 互换时间片与教室
     sw = client.post("/api/v1/validator/swap", json={"plan_id": plan.id, "detail_id_a": det_a.id, "detail_id_b": det_b.id})
     assert sw.status_code == 200 and sw.json()["swapped"] is True
-    db.refresh(det_a)
-    db.refresh(det_b)
-    assert det_a.timeslot_id == ts2.id and det_b.timeslot_id == ts1.id
+    det_a_new = db.get(ScheduleDetail, det_a.id)
+    det_b_new = db.get(ScheduleDetail, det_b.id)
+    assert det_a_new.timeslot_id == ts2.id and det_b_new.timeslot_id == ts1.id
 
     # 2. 空教室实时查询：第 1 周周一 1-2 节 r2 被 B 占用，仅剩 r1 空闲；第 18 周两间都空闲
     fr1 = client.get("/api/v1/workbench/free-rooms", params={"semester_id": sem1.id, "week_no": 1, "day_of_week": 1, "period_index": 1}).json()

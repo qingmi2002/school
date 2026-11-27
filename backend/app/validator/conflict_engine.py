@@ -561,8 +561,22 @@ def execute_smart_swap(
             "soft_warnings": all_soft,
         }
 
-    det_a.timeslot_id, det_a.classroom_id, det_a.is_manual_adjusted = old_b_ts, old_b_room, True
+    # 规避 UNIQUE(plan_id, timeslot_id, classroom_id, week_type) 互换瞬时碰撞：同一事务内先移除 A、更新 B、再原 ID 写回 A
+    a_snapshot = dict(
+        id=det_a.id,
+        plan_id=det_a.plan_id,
+        task_id=det_a.task_id,
+        timeslot_id=old_b_ts,
+        classroom_id=old_b_room,
+        week_type=det_a.week_type,
+        week_mask=det_a.week_mask,
+        is_manual_adjusted=True,
+    )
+    db.delete(det_a)
+    db.flush()
     det_b.timeslot_id, det_b.classroom_id, det_b.is_manual_adjusted = old_a_ts, old_a_room, True
+    db.flush()
+    db.add(ScheduleDetail(**a_snapshot))
     db.commit()
     return {
         "swapped": True,

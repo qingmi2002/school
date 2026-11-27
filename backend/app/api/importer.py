@@ -43,6 +43,7 @@ async def validate_excel_upload(
     scope: Literal["SINGLE_DEPT", "SCHOOL_WIDE"] = Query("SCHOOL_WIDE"),
 ):
     raw_bytes = await file.read()
+    _validate_xlsx_bytes(file.filename, raw_bytes)
     gateway = ExcelImportGateway(ImportContext(scope=scope))
     return gateway.parse_and_validate(raw_bytes, import_type=import_type)
 
@@ -54,6 +55,7 @@ async def validate_and_export_annotated_excel(
     scope: Literal["SINGLE_DEPT", "SCHOOL_WIDE"] = Query("SCHOOL_WIDE"),
 ):
     raw_bytes = await file.read()
+    _validate_xlsx_bytes(file.filename, raw_bytes)
     gateway = ExcelImportGateway(ImportContext(scope=scope))
     result = gateway.parse_and_validate(raw_bytes, import_type=import_type)
     annotated = export_annotated_conflict_excel(raw_bytes, result)
