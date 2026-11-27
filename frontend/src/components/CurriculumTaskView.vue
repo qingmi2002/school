@@ -35,8 +35,13 @@
           <el-table-column label="教室类型" width="110">
             <template #default="{ row }">{{ roomTypeLabel(row.required_room_type) }}</template>
           </el-table-column>
-          <el-table-column label="周次/节次" width="120">
-            <template #default="{ row }">{{ row.start_week }}-{{ row.end_week }}周 · 周{{ row.weekly_sessions }}次</template>
+          <el-table-column label="学期总课时与有效周" min-width="170">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.hours_sufficient === false ? 'danger' : 'success'" style="margin-right: 4px">
+                {{ row.planned_actual_hours || 0 }}/{{ row.total_hours || "-" }}学时
+              </el-tag>
+              <span class="muted">{{ row.effective_weeks_label || `${row.start_week}-${row.end_week}周` }} · 周{{ row.weekly_sessions }}次</span>
+            </template>
           </el-table-column>
           <el-table-column label="操作" width="80">
             <template #default="{ row }">
@@ -64,6 +69,7 @@
           </el-table-column>
           <el-table-column prop="combined_task_count" label="合班任务" width="85" />
           <el-table-column prop="total_weekly_sessions" label="周总节次" width="90" />
+          <el-table-column prop="total_semester_hours" label="学期总学时" width="100" />
         </el-table>
       </el-tab-pane>
 
@@ -80,6 +86,7 @@
             <template #default="{ row }">{{ roomTypeLabel(row.required_room_type) }}</template>
           </el-table-column>
           <el-table-column prop="default_weekly_sessions" label="默认周节次" width="95" />
+          <el-table-column prop="default_total_hours" label="默认总学时" width="95" />
           <el-table-column label="允许合班" width="90">
             <template #default="{ row }">
               <el-tag size="small" :type="row.allow_combined ? 'success' : 'info'">
@@ -122,13 +129,18 @@
             <el-option label="阶梯/合班大教室" value="LECTURE_HALL" />
           </el-select>
         </el-form-item>
-        <el-form-item label="周节次与周次">
-          <el-input-number v-model="taskForm.weekly_sessions" :min="1" :max="6" style="width: 100px" />
-          <span style="margin: 0 8px">第</span>
-          <el-input-number v-model="taskForm.start_week" :min="1" :max="24" style="width: 90px" />
+        <el-form-item label="总学时与周次">
+          <el-input-number v-model="taskForm.total_hours" :min="4" :max="200" :step="2" style="width: 105px" />
+          <span style="margin: 0 6px">学时 · 周</span>
+          <el-input-number v-model="taskForm.weekly_sessions" :min="1" :max="6" style="width: 85px" />
+          <span style="margin: 0 6px">次</span>
+        </el-form-item>
+        <el-form-item label="起止周与连堂">
+          <el-input-number v-model="taskForm.start_week" :min="1" :max="24" style="width: 88px" />
           <span style="margin: 0 6px">至</span>
-          <el-input-number v-model="taskForm.end_week" :min="1" :max="24" style="width: 90px" />
-          <span style="margin-left: 6px">周</span>
+          <el-input-number v-model="taskForm.end_week" :min="1" :max="24" style="width: 88px" />
+          <span style="margin: 0 10px 0 6px">周</span>
+          <el-checkbox v-model="taskForm.prefer_consecutive">实验/上机连堂</el-checkbox>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -157,6 +169,7 @@
           </el-select>
         </el-form-item>
         <el-form-item label="默认周节次"><el-input-number v-model="courseForm.default_weekly_sessions" :min="1" :max="6" /></el-form-item>
+        <el-form-item label="默认总学时"><el-input-number v-model="courseForm.default_total_hours" :min="4" :max="200" :step="2" /></el-form-item>
         <el-form-item label="允许合班"><el-switch v-model="courseForm.allow_combined" /></el-form-item>
       </el-form>
       <template #footer>
@@ -203,6 +216,8 @@ const taskForm = reactive({
   teacher_id: undefined as number | undefined,
   required_room_type: "",
   weekly_sessions: 2,
+  total_hours: 32,
+  prefer_consecutive: false,
   start_week: 1,
   end_week: 18,
 });
@@ -213,6 +228,7 @@ const courseForm = reactive({
   course_category: "THEORY",
   required_room_type: "NORMAL",
   default_weekly_sessions: 2,
+  default_total_hours: 32,
   allow_combined: true,
 });
 
@@ -278,6 +294,8 @@ async function handleCreateTask() {
     cohort_ids: taskForm.cohort_ids,
     required_room_type: taskForm.required_room_type || undefined,
     weekly_sessions: taskForm.weekly_sessions,
+    total_hours: taskForm.total_hours,
+    prefer_consecutive: taskForm.prefer_consecutive,
     start_week: taskForm.start_week,
     end_week: taskForm.end_week,
   });

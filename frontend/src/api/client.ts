@@ -318,6 +318,7 @@ export interface CourseItem {
   course_category: string;
   required_room_type: string;
   default_weekly_sessions: number;
+  default_total_hours: number;
   allow_combined: boolean;
 }
 
@@ -336,6 +337,11 @@ export interface TeachingTaskItem {
   cohort_names: string[];
   is_combined: boolean;
   weekly_sessions: number;
+  total_hours?: number | null;
+  planned_actual_hours?: number;
+  hours_sufficient?: boolean;
+  effective_weeks_label?: string;
+  prefer_consecutive?: boolean;
   week_type: number;
   start_week: number;
   end_week: number;
@@ -351,6 +357,7 @@ export interface TeacherWorkloadItem {
   task_count: number;
   combined_task_count: number;
   total_weekly_sessions: number;
+  total_semester_hours: number;
   courses: string[];
   cohorts: string[];
 }
@@ -366,6 +373,7 @@ export async function createCourse(payload: {
   course_category: string;
   required_room_type: string;
   default_weekly_sessions: number;
+  default_total_hours?: number;
   allow_combined: boolean;
 }): Promise<CourseItem> {
   const { data } = await apiClient.post<CourseItem>("/curriculum/courses", payload);
@@ -392,6 +400,8 @@ export async function createTeachingTask(payload: {
   cohort_ids: number[];
   required_room_type?: string;
   weekly_sessions?: number;
+  total_hours?: number;
+  prefer_consecutive?: boolean;
   week_type?: number;
   start_week?: number;
   end_week?: number;
