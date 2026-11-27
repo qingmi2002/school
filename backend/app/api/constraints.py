@@ -37,6 +37,8 @@ def _is_unavail_window_open(db: Session) -> bool:
     row = db.query(SystemConfig).filter(SystemConfig.config_key == "teacher_unavail_open").first()
     if row is None:
         return True
+    if isinstance(row.config_value, dict):
+        return bool(row.config_value.get("is_open", True))
     return str(row.config_value).lower() not in ("false", "0", "closed")
 
 
@@ -84,9 +86,9 @@ def set_teacher_unavail_window(
     if current_user is not None and current_user.role_code not in SCHEDULER_ROLES:
         raise HTTPException(status_code=403, detail="仅排课管理员可开关教师禁排填报窗口")
     row = db.query(SystemConfig).filter(SystemConfig.config_key == "teacher_unavail_open").first()
-    val = "true" if payload.is_open else "false"
+    val = {"is_open": bool(payload.is_open)}
     if row is None:
-        db.add(SystemConfig(config_key="teacher_unavail_open", config_value=val, description="是否开放教师自助禁排填报"))
+        db.add(SystemConfig(config_key="teacher_unavail_open", config_value=val))
     else:
         row.config_value = val
     db.commit()
