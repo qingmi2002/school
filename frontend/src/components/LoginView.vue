@@ -65,6 +65,9 @@ async function handleLogin(): Promise<void> {
   try {
     const res = await loginApi(form.username, form.password);
     localStorage.setItem("ss_token", res.access_token);
+    if (res.must_change_password) {
+      ElMessage.warning("当前仍在使用默认密码 123456，请点击右上角「改密」尽快修改");
+    }
     emit("logged-in", res.user);
   } catch (err: unknown) {
     const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail || "登录失败";

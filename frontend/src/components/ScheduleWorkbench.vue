@@ -114,8 +114,17 @@
                     <div class="card-meta">
                       {{ card.teacher_name }} · {{ card.room_code }}
                     </div>
-                    <div class="card-meta">
-                      {{ card.is_locked ? `已锁定 (${card.lock_source || "校级公共课"})` : card.cohort_names.join(",") }}
+                    <div class="card-meta" style="display: flex; justify-content: space-between; align-items: center">
+                      <span>{{ card.is_locked ? `已锁定 (${card.lock_source || "手动锁课"})` : card.cohort_names.join(",") }}</span>
+                      <el-button
+                        v-if="card.detail_id > 0 && card.task_id > 0"
+                        link
+                        size="small"
+                        :type="card.is_locked ? 'warning' : 'info'"
+                        @click.stop="handleToggleCardLock(card)"
+                      >
+                        {{ card.is_locked ? "解锁" : "锁课" }}
+                      </el-button>
                     </div>
                   </div>
 
@@ -158,11 +167,13 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import {
   applyDragMove,
+  executeSmartSwap,
   fetchMatrixLights,
   fetchSchedulePlans,
   fetchWorkbenchView,
   publishSchedulePlan,
   runHealthCheck,
+  toggleTaskLock,
   triggerOneClickSolve,
   type HealthCheckReport,
   type MatrixCard,
@@ -423,18 +434,53 @@ function lightHintText(targetSlotId: number): string {
   return "绿灯可放";
 }
 
+async function handleToggleCardLock(card: MatrixCard): Promise<void> {
+  try {
+    const nextLocked = !card.is_locked;
+    await toggleTaskLock(card.task_id, nextLocked);
+    card.is_locked = nextLocked;
+    ElMessage.success(nextLocked ? `已锁定《${card.course_name}》，一键重排将自动避让并保留` : `已解锁《${card.course_name}》`);
+  } catch (err: any) {
+    ElMessage.error(err?.response?.data?.detail || '锁定状态切换失败');
+  }
+}
+
 async function onDropCell(targetSlotId: number): Promise<void> {
   const card = draggingCard.value;
   if (!card) return;
+  const day = Math.floor((targetSlotId - 1) / 5) + 1;
+  const period = ((targetSlotId - 1) % 5) + 1;
+
+  // V1.9 拖拽智能对调：若目标格已有可移动课程，优先尝试双方无冲突互换
+  const occupant = cardsInSlot(day, period).find((c) => c.detail_id > 0 && !c.is_locked && c.detail_id !== card.detail_id);
+  if (occupant) {
+    try {
+      const sw = await executeSmartSwap({
+        plan_id: view.value.plan_id,
+        detail_id_a: card.detail_id,
+        detail_id_b: occupant.detail_id,
+        scope: scopeMode.value,
+      });
+      if (sw.swapped) {
+        ElMessage.success(`智能对调成功：《${card.course_name}》↔《${occupant.course_name}》`);
+        view.value = await fetchWorkbenchView(view.value.plan_id);
+      } else {
+        ElMessage.error(sw.hard_conflicts[0] || '双方对调存在硬冲突，已拦截');
+      }
+    } catch (err: any) {
+      ElMessage.error(err?.response?.data?.detail || '对调请求失败');
+    } finally {
+      onDragEnd();
+    }
+    return;
+  }
+
   const st = slotLights[targetSlotId];
   if (st && !st.allowed) {
     ElMessage.error(st.hard_conflicts[0] || "存在硬约束冲突，禁止移入");
     onDragEnd();
     return;
   }
-
-  const day = Math.floor((targetSlotId - 1) / 5) + 1;
-  const period = ((targetSlotId - 1) % 5) + 1;
 
   try {
     await applyDragMove({
