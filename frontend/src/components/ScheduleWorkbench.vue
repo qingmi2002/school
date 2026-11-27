@@ -305,17 +305,17 @@ async function loadPlanList() {
 async function switchPlan(pid: number) {
   try {
     const latest = await fetchWorkbenchView(pid);
-    Object.assign(view, latest);
+    view.value = latest;
   } catch {
     ElMessage.warning('加载方案失败');
   }
 }
 
 async function handlePublishPlan() {
-  if (!view.plan_id) return;
+  if (!view.value.plan_id) return;
   publishing.value = true;
   try {
-    await publishSchedulePlan(view.plan_id);
+    await publishSchedulePlan(view.value.plan_id);
     ElMessage.success('课表方案已正式发布，教师与学生端现已可见');
     await loadPlanList();
   } catch (err: any) {
@@ -333,7 +333,7 @@ async function handleOneClickSolve() {
     activePlanId.value = res.plan_id;
     await loadPlanList();
     const latest = await fetchWorkbenchView(res.plan_id);
-    Object.assign(view, latest);
+    view.value = latest;
   } catch (err: any) {
     ElMessage.error(err?.response?.data?.detail || '一键排课失败，请检查基础数据与课程任务');
   } finally {
