@@ -1,16 +1,19 @@
-"""登录鉴权、分级角色信息、教师个人课表、学生班级课表及一键初始化演示数据 API。"""
+"""登录鉴权、分级角色信息、教师个人课表、学生班级课表（已集成 V1.4 整周实训提示与精确周次标签）。"""
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.week_plan import get_cohort_blocked_mask
 from app.auth.security import create_access_token, get_current_user, verify_password
 from app.auth.seed import seed_full_demo_data
+from app.core.week_mask import build_week_mask, mask_to_label, subtract_blocked_weeks
 from app.db.session import get_db
 from app.locks.service import get_effective_locks_for_node
 from app.models import (
     Classroom,
+    CohortWeekPlan,
     OrgNode,
     ScheduleDetail,
     SchedulePlan,
@@ -60,14 +63,16 @@ class PersonalCourseCard(BaseModel):
     teacher_name: str
     cohort_names: List[str]
     week_type: int
+    effective_weeks_label: str = "1-18周"
     is_public_lock: bool = False
 
 
 class PersonalScheduleOut(BaseModel):
-    owner_type: str  # TEACHER / STUDENT
+    owner_type: str
     owner_name: str
     sub_title: str
     plan_id: Optional[int]
+    block_week_notices: List[str] = Field(default_factory=list)
     cards: List[PersonalCourseCard]
 
 
@@ -96,7 +101,6 @@ def seed_demo_api(db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=LoginResponse)
 def login_api(req: LoginRequest, db: Session = Depends(get_db)):
-    # 若库内尚无任何用户且请求默认演示账号，自动初始化演示数据实现开箱即用
     if db.query(SysUser).count() == 0:
         seed_full_demo_data(db)
 
@@ -115,7 +119,6 @@ def get_me_api(current_user: SysUser = Depends(get_current_user), db: Session = 
 
 @router.get("/users", response_model=List[UserProfileOut])
 def list_scoped_users_api(current_user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
-    """分级权限查看管辖范围内的账号列表（校级看全校，院/系/专业级仅看子树）。"""
     my_org = db.query(OrgNode).filter(OrgNode.id == current_user.org_node_id).first()
     orgs = db.query(OrgNode).all()
     if current_user.role_code == "SUPER_ADMIN":
@@ -129,7 +132,6 @@ def list_scoped_users_api(current_user: SysUser = Depends(get_current_user), db:
 
 @router.get("/my-schedule", response_model=PersonalScheduleOut)
 def get_my_schedule_api(current_user: SysUser = Depends(get_current_user), db: Session = Depends(get_db)):
-    """教师查看个人排课信息 / 学生查看所属行政班排课信息。"""
     plan = db.query(SchedulePlan).order_by(SchedulePlan.is_published.desc(), SchedulePlan.id.desc()).first()
     ts_map = {t.id: t for t in db.query(Timeslot).all()}
     room_map = {r.id: r for r in db.query(Classroom).all()}
@@ -137,8 +139,26 @@ def get_my_schedule_api(current_user: SysUser = Depends(get_current_user), db: S
     cohort_map = {c.id: c for c in db.query(StudentCohort).all()}
 
     cards: List[PersonalCourseCard] = []
+    block_notices: List[str] = []
 
     if plan:
+        # 收集整周实训/考试/停课横幅提示
+        if current_user.role_code == "STUDENT" and current_user.cohort_id:
+            bw_rows = (
+                db.query(CohortWeekPlan)
+                .filter(
+                    CohortWeekPlan.semester_id == plan.semester_id,
+                    CohortWeekPlan.cohort_id == current_user.cohort_id,
+                    CohortWeekPlan.week_mode != "REGULAR",
+                )
+                .order_by(CohortWeekPlan.week_no)
+                .all()
+            )
+            mode_cn = {"PRACTICUM": "整周实训", "INTERNSHIP": "校外实习", "EXAM": "考试周", "HOLIDAY": "停课"}
+            for r in bw_rows:
+                cname = r.block_course_name or mode_cn.get(r.week_mode, r.week_mode)
+                block_notices.append(f"第{r.week_no}周：{cname}（{mode_cn.get(r.week_mode, r.week_mode)}，常规课暂停）")
+
         details = db.query(ScheduleDetail).filter(ScheduleDetail.plan_id == plan.id).all()
         tasks = {t.id: t for t in db.query(TeachingTask).filter(TeachingTask.semester_id == plan.semester_id).all()}
 
@@ -155,6 +175,10 @@ def get_my_schedule_api(current_user: SysUser = Depends(get_current_user), db: S
                 if current_user.cohort_id is None or current_user.cohort_id not in (t.cohort_ids or []):
                     continue
 
+            raw_m = d.week_mask or t.week_mask or build_week_mask(t.start_week, t.end_week, d.week_type)
+            blocked_m = get_cohort_blocked_mask(db, plan.semester_id, list(t.cohort_ids or []))
+            eff_label = mask_to_label(subtract_blocked_weeks(raw_m, blocked_m))
+
             cards.append(
                 PersonalCourseCard(
                     course_code=t.course_code,
@@ -167,16 +191,18 @@ def get_my_schedule_api(current_user: SysUser = Depends(get_current_user), db: S
                     teacher_name=user_map[t.teacher_id].real_name if t.teacher_id in user_map else "",
                     cohort_names=[cohort_map[cid].cohort_name for cid in (t.cohort_ids or []) if cid in cohort_map],
                     week_type=d.week_type,
+                    effective_weeks_label=eff_label,
                 )
             )
 
-        # 学生同时叠加所属班级的校级公共课锁定
         if current_user.role_code == "STUDENT" and current_user.cohort_id:
             locks = get_effective_locks_for_node(db, plan.semester_id, current_user.org_node_id)
+            blocked_m = get_cohort_blocked_mask(db, plan.semester_id, [current_user.cohort_id])
             for lk in locks.locks:
                 if lk.cohort_id == current_user.cohort_id and lk.timeslot_id in ts_map:
                     ts = ts_map[lk.timeslot_id]
                     rm = room_map.get(lk.classroom_id) if lk.classroom_id else None
+                    eff_label = mask_to_label(subtract_blocked_weeks(build_week_mask(1, 18, lk.week_type), blocked_m))
                     cards.append(
                         PersonalCourseCard(
                             course_code="PUBLIC",
@@ -191,6 +217,7 @@ def get_my_schedule_api(current_user: SysUser = Depends(get_current_user), db: S
                             if current_user.cohort_id in cohort_map
                             else [],
                             week_type=lk.week_type,
+                            effective_weeks_label=eff_label,
                             is_public_lock=True,
                         )
                     )
@@ -202,6 +229,7 @@ def get_my_schedule_api(current_user: SysUser = Depends(get_current_user), db: S
             owner_name=current_user.real_name,
             sub_title=f"行政班：{cname}",
             plan_id=plan.id if plan else None,
+            block_week_notices=block_notices,
             cards=cards,
         )
 
@@ -210,5 +238,6 @@ def get_my_schedule_api(current_user: SysUser = Depends(get_current_user), db: S
         owner_name=current_user.real_name,
         sub_title=f"工号：{current_user.username}",
         plan_id=plan.id if plan else None,
+        block_week_notices=block_notices,
         cards=cards,
     )

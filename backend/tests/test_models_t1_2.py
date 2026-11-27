@@ -1,4 +1,4 @@
-"""核心数据表与外键/唯一约束测试（V1.3 共 19 张核心表，含独立教学楼表 building）。"""
+"""核心数据表与外键/唯一约束测试（V1.4 共 20 张核心表，含班级周历 cohort_week_plan）。"""
 import pytest
 from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
@@ -41,7 +41,7 @@ def db_session():
 
 
 def test_core_tables_registered():
-    assert len(Base.metadata.tables) == 19
+    assert len(Base.metadata.tables) == 20
 
 
 def test_multi_campus_boundary_resolution_and_lateral_grant(db_session):

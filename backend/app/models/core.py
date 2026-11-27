@@ -1,6 +1,7 @@
 """
-核心数据模型（V1.3 全动态数据库驱动 — 19 张核心表）
-V1.3 新增 Building（独立教学楼数据表）及 Classroom.building_id 外键关联。
+核心数据模型（V1.4 全动态数据库驱动 — 20 张核心表）
+V1.4 新增 CohortWeekPlan（班级学期周历进程表，支持整周实训/实习/考试/停课）
+并在 TeachingTask / ScheduleDetail 新增 week_mask 位掩码字段。
 """
 from datetime import datetime
 from typing import Optional
@@ -43,14 +44,10 @@ class OrgNode(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    parent_id: Mapped[Optional[int]] = mapped_column(
-        Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=True
-    )
+    parent_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=True)
     node_code: Mapped[str] = mapped_column(String(40), unique=True, nullable=False)
     node_name: Mapped[str] = mapped_column(String(120), nullable=False)
-    node_type_code: Mapped[str] = mapped_column(
-        String(32), ForeignKey("node_type.code", ondelete="RESTRICT"), nullable=False
-    )
+    node_type_code: Mapped[str] = mapped_column(String(32), ForeignKey("node_type.code", ondelete="RESTRICT"), nullable=False)
     tree_path: Mapped[str] = mapped_column(String(512), nullable=False)
     depth: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
 
@@ -170,8 +167,6 @@ class StudentCohort(Base):
 
 
 class Building(Base):
-    """独立教学楼数据表（关联校区/归属组织节点，供教室与跨校区通勤溯源使用）"""
-
     __tablename__ = "building"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -229,6 +224,7 @@ class TeachingTask(Base):
     week_type: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
     start_week: Mapped[int] = mapped_column(SmallInteger, default=1, nullable=False)
     end_week: Mapped[int] = mapped_column(SmallInteger, default=18, nullable=False)
+    week_mask: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # V1.4 精确周次位掩码
     total_students: Mapped[int] = mapped_column(Integer, nullable=False)
     required_env_tags: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -307,6 +303,7 @@ class ScheduleDetail(Base):
     timeslot_id: Mapped[int] = mapped_column(Integer, ForeignKey("timeslot.id", ondelete="RESTRICT"), nullable=False)
     classroom_id: Mapped[int] = mapped_column(Integer, ForeignKey("classroom.id", ondelete="RESTRICT"), nullable=False)
     week_type: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
+    week_mask: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # V1.4 精确有效周位掩码
     is_manual_adjusted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
@@ -353,3 +350,27 @@ class SchedulePolicyRule(Base):
     period_index: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     remark: Mapped[Optional[str]] = mapped_column(String(160))
+
+
+class CohortWeekPlan(Base):
+    """V1.4 班级学期周历进程表：按班级×周次标记常规教学周、整周集中实训、实习周、考试周、停课周"""
+
+    __tablename__ = "cohort_week_plan"
+    __table_args__ = (
+        UniqueConstraint("semester_id", "cohort_id", "week_no", name="uq_cohort_week_plan_cell"),
+        CheckConstraint("week_no BETWEEN 1 AND 30", name="ck_cohort_week_no"),
+        CheckConstraint(
+            "week_mode IN ('REGULAR', 'PRACTICUM', 'INTERNSHIP', 'EXAM', 'HOLIDAY')",
+            name="ck_cohort_week_mode",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    semester_id: Mapped[int] = mapped_column(Integer, ForeignKey("semester.id", ondelete="CASCADE"), nullable=False)
+    cohort_id: Mapped[int] = mapped_column(Integer, ForeignKey("student_cohort.id", ondelete="CASCADE"), nullable=False)
+    week_no: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    week_mode: Mapped[str] = mapped_column(String(20), default="REGULAR", nullable=False)
+    block_course_name: Mapped[Optional[str]] = mapped_column(String(120))  # 如 'Java综合实训'
+    block_teacher_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True)
+    block_classroom_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("classroom.id", ondelete="SET NULL"), nullable=True)
+    remark: Mapped[Optional[str]] = mapped_column(String(200))

@@ -18,6 +18,7 @@ from app.models.core import (
     ScheduleChangeAudit,
     SystemConfig,
     SchedulePolicyRule,
+    CohortWeekPlan,
 )
 
 __all__ = [
@@ -40,4 +41,5 @@ __all__ = [
     "ScheduleChangeAudit",
     "SystemConfig",
     "SchedulePolicyRule",
+    "CohortWeekPlan",
 ]
