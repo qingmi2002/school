@@ -12,7 +12,7 @@
       <div class="h-right">
         <el-badge :is-dot="Boolean(versionInfo?.has_update)">
           <el-button size="small" link style="color: #e2e8f0" @click="upgradeDialogVisible = true">
-            {{ versionInfo?.has_update ? `新版本 ${versionInfo.latest_version}` : (versionInfo?.current_version || "v1.9.0") }}
+            {{ versionInfo?.has_update ? `新版本 ${versionInfo.latest_version}` : (versionInfo?.current_version || "v1.9.1") }}
           </el-button>
         </el-badge>
         <span class="user-info">{{ currentUser.real_name }}（{{ currentUser.role_label }}）</span>
