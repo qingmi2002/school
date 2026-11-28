@@ -486,6 +486,7 @@ def export_domain_excel_api(domain: str, db: Session = Depends(get_db)):
     from urllib.parse import quote
     from fastapi.responses import Response
     import openpyxl
+    from app.models import OrgNode
 
     wb = openpyxl.Workbook()
     ws = wb.active

@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "智能排课系统"
-    APP_VERSION: str = "v2.0.0"
+    APP_VERSION: str = "v2.0.1"
     GITHUB_REPO: str = "qingmi2002/school"
     JWT_SECRET: str = "change_me_smart_schedule_jwt_secret_2026"
     JWT_EXPIRE_HOURS: int = 24
