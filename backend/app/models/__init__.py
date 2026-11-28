@@ -1,6 +1,7 @@
 from app.models.core import (
     NodeType,
     OrgNode,
+    OrgNodeManager,
     OrgResourceGrant,
     SysUser,
     ExcelImportBatch,
@@ -25,6 +26,7 @@ from app.models.core import (
 __all__ = [
     "NodeType",
     "OrgNode",
+    "OrgNodeManager",
     "OrgResourceGrant",
     "SysUser",
     "ExcelImportBatch",

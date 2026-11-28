@@ -147,3 +147,77 @@ def get_effective_timeslots_api(node_id: int, db: Session = Depends(get_db)):
         return get_effective_timeslots(db, org_node_id=node_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+from pydantic import BaseModel as _OrgBaseModel
+from app.models import OrgNode as _OrgNode, OrgNodeManager as _OrgNodeManager, SysUser as _SysUser
+
+
+class OrgManagerBindIn(_OrgBaseModel):
+    user_id: int
+    title_name: str  # 如：系主任、软件专业负责人、排课干事
+    permission_level: str = "SCHEDULER"  # FULL_ADMIN / SCHEDULER / VIEW_ONLY
+
+
+@router.get("/nodes/{node_id}/managers")
+def list_org_node_managers_api(node_id: int, db: Session = Depends(get_db)):
+    rows = (
+        db.query(_OrgNodeManager)
+        .filter(_OrgNodeManager.org_node_id == node_id, _OrgNodeManager.is_active.is_(True))
+        .order_by(_OrgNodeManager.id)
+        .all()
+    )
+    user_map = {u.id: u for u in db.query(_SysUser).all()}
+    return [
+        {
+            "id": r.id,
+            "org_node_id": r.org_node_id,
+            "user_id": r.user_id,
+            "username": user_map[r.user_id].username if r.user_id in user_map else "",
+            "real_name": user_map[r.user_id].real_name if r.user_id in user_map else f"用户#{r.user_id}",
+            "title_name": r.title_name,
+            "permission_level": r.permission_level,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/nodes/{node_id}/managers")
+def bind_org_node_manager_api(node_id: int, payload: OrgManagerBindIn, db: Session = Depends(get_db)):
+    node = db.query(_OrgNode).filter(_OrgNode.id == node_id).first()
+    if node is None:
+        raise HTTPException(status_code=404, detail="组织节点不存在")
+    user = db.query(_SysUser).filter(_SysUser.id == payload.user_id).first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="目标用户不存在")
+    if payload.permission_level not in ("FULL_ADMIN", "SCHEDULER", "VIEW_ONLY"):
+        raise HTTPException(status_code=400, detail="无效的权限级别")
+    row = _OrgNodeManager(
+        org_node_id=node_id,
+        user_id=payload.user_id,
+        title_name=payload.title_name.strip(),
+        permission_level=payload.permission_level,
+        is_active=True,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": row.id,
+        "org_node_id": row.org_node_id,
+        "user_id": row.user_id,
+        "username": user.username,
+        "real_name": user.real_name,
+        "title_name": row.title_name,
+        "permission_level": row.permission_level,
+    }
+
+
+@router.delete("/managers/{manager_id}")
+def unbind_org_node_manager_api(manager_id: int, db: Session = Depends(get_db)):
+    row = db.query(_OrgNodeManager).filter(_OrgNodeManager.id == manager_id).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="节点管理员绑定记录不存在")
+    db.delete(row)
+    db.commit()
+    return {"deleted": True, "id": manager_id}

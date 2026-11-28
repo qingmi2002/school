@@ -17,8 +17,10 @@ from app.models import (
     Classroom,
     CohortWeekPlan,
     OrgNode,
+    OrgNodeManager,
     ScheduleDetail,
     SchedulePlan,
+    Semester,
     StudentCohort,
     SystemConfig,
     SysUser,
@@ -47,6 +49,7 @@ class UserProfileOut(BaseModel):
     cohort_id: Optional[int] = None
     cohort_name: Optional[str] = None
     permissions: List[str]
+    managed_nodes: List[dict] = Field(default_factory=list)
 
 
 _LOGIN_FAILURES: dict[str, list[float]] = defaultdict(list)
@@ -104,6 +107,15 @@ def _build_profile(db: Session, user: SysUser) -> UserProfileOut:
         cohort_id=user.cohort_id,
         cohort_name=cohort.cohort_name if cohort else None,
         permissions=get_role_permissions(user.role_code),
+        managed_nodes=[
+            {
+                'org_node_id': m.org_node_id,
+                'org_node_name': (db.query(OrgNode).filter(OrgNode.id == m.org_node_id).first().node_name if db.query(OrgNode).filter(OrgNode.id == m.org_node_id).first() else ''),
+                'title_name': m.title_name,
+                'permission_level': m.permission_level,
+            }
+            for m in db.query(OrgNodeManager).filter(OrgNodeManager.user_id == user.id, OrgNodeManager.is_active.is_(True)).all()
+        ],
     )
 
 
@@ -331,3 +343,92 @@ def reset_password_api(
     target.password_hash = hash_password(payload.new_password)
     db.commit()
     return {"reset": True, "user_id": target.id, "username": target.username}
+
+
+@router.get("/my-overview")
+def get_my_personal_overview_api(
+    current_user: SysUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """V2.0 学生/普通教师专属个人工作台概览（聚合身份、班级届别/固定教室、课程总学时、实训提醒与管辖职务）。"""
+    profile = _build_profile(db, current_user)
+    sem = db.query(Semester).filter(Semester.is_current.is_(True)).first() or db.query(Semester).first()
+    sem_id = sem.id if sem else None
+    sem_name = sem.name if sem else "未设定学期"
+
+    if current_user.role_code == "STUDENT":
+        cohort = db.query(StudentCohort).filter(StudentCohort.id == current_user.cohort_id).first() if current_user.cohort_id else None
+        fixed_room = (
+            db.query(Classroom).filter(Classroom.fixed_cohort_id == cohort.id, Classroom.usage_mode == "FIXED").first()
+            if cohort
+            else None
+        )
+        courses_list = []
+        block_notices = []
+        if cohort and sem_id:
+            t_map = {u.id: u.real_name for u in db.query(SysUser).all()}
+            for t in db.query(TeachingTask).filter(TeachingTask.semester_id == sem_id).all():
+                if cohort.id in (t.cohort_ids or []):
+                    courses_list.append(
+                        {
+                            "course_code": t.course_code,
+                            "course_name": t.course_name,
+                            "teacher_name": t_map.get(t.teacher_id, ""),
+                            "weekly_sessions": t.weekly_sessions,
+                            "total_hours": getattr(t, "total_hours", None) or (t.weekly_sessions * 32),
+                            "is_combined": len(t.cohort_ids or []) >= 2,
+                        }
+                    )
+            for wp in db.query(CohortWeekPlan).filter(CohortWeekPlan.semester_id == sem_id, CohortWeekPlan.cohort_id == cohort.id, CohortWeekPlan.week_mode != "REGULAR").order_by(CohortWeekPlan.week_no).all():
+                block_notices.append(f"第{wp.week_no}周：{wp.block_course_name or wp.week_mode}")
+        sy = int(getattr(cohort, "study_years", 4) or 4) if cohort else 4
+        gy = (getattr(cohort, "graduation_year", None) or (cohort.grade_year + sy)) if cohort else None
+        return {
+            "view_type": "STUDENT",
+            "semester_name": sem_name,
+            "profile": profile.model_dump(),
+            "cohort_lifecycle": (
+                {
+                    "cohort_name": cohort.cohort_name,
+                    "enroll_year": cohort.grade_year,
+                    "study_years": sy,
+                    "graduation_year": gy,
+                    "status": getattr(cohort, "cohort_status", "ACTIVE"),
+                    "fixed_room_code": fixed_room.room_code if fixed_room else "无固定教室(流动走班)",
+                }
+                if cohort
+                else None
+            ),
+            "block_notices": block_notices,
+            "my_courses": courses_list,
+        }
+
+    # 教师 / 教研室主任 / 管理员个人工作台概览
+    my_tasks = db.query(TeachingTask).filter(TeachingTask.teacher_id == current_user.id).all()
+    if sem_id:
+        my_tasks = [t for t in my_tasks if t.semester_id == sem_id]
+    cohort_map = {c.id: c.cohort_name for c in db.query(StudentCohort).all()}
+    total_weekly = sum(int(t.weekly_sessions or 0) for t in my_tasks)
+    total_hours = sum(int(getattr(t, "total_hours", None) or (t.weekly_sessions * 32)) for t in my_tasks)
+    win_row = db.query(SystemConfig).filter(SystemConfig.config_key == "teacher_unavail_open").first()
+    unavail_open = True if not win_row else (bool(win_row.config_value.get("is_open", True)) if isinstance(win_row.config_value, dict) else True)
+    return {
+        "view_type": "TEACHER",
+        "semester_name": sem_name,
+        "profile": profile.model_dump(),
+        "teacher_priority": int(getattr(current_user, "teacher_priority", 1) or 1),
+        "unavail_window_open": unavail_open,
+        "total_weekly_sessions": total_weekly,
+        "total_semester_hours": total_hours,
+        "my_courses": [
+            {
+                "course_code": t.course_code,
+                "course_name": t.course_name,
+                "cohorts": [cohort_map[cid] for cid in (t.cohort_ids or []) if cid in cohort_map],
+                "is_combined": len(t.cohort_ids or []) >= 2,
+                "weekly_sessions": t.weekly_sessions,
+                "total_hours": getattr(t, "total_hours", None) or (t.weekly_sessions * 32),
+            }
+            for t in my_tasks
+        ],
+    }

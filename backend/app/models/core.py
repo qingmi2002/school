@@ -164,6 +164,9 @@ class StudentCohort(Base):
     cohort_name: Mapped[str] = mapped_column(String(100), nullable=False)
     org_node_id: Mapped[int] = mapped_column(Integer, ForeignKey("org_node.id", ondelete="RESTRICT"), nullable=False)
     grade_year: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    study_years: Mapped[int] = mapped_column(SmallInteger, default=4, nullable=False)  # V2.0 学制(2/3/4/5年)
+    graduation_year: Mapped[Optional[int]] = mapped_column(SmallInteger, nullable=True)  # V2.0 毕业年份
+    cohort_status: Mapped[str] = mapped_column(String(16), default="ACTIVE", nullable=False)  # ACTIVE / GRADUATED
     student_count: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
 
 
@@ -397,3 +400,19 @@ class CohortWeekPlan(Base):
     block_teacher_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("sys_user.id", ondelete="SET NULL"), nullable=True)
     block_classroom_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("classroom.id", ondelete="SET NULL"), nullable=True)
     remark: Mapped[Optional[str]] = mapped_column(String(200))
+
+class OrgNodeManager(Base):
+    """V2.0 组织节点职能管理人员绑定表：支持在任意层级节点挂接自定义职能名称的管理员。"""
+    __tablename__ = "org_node_manager"
+    __table_args__ = (
+        CheckConstraint("permission_level IN ('FULL_ADMIN', 'SCHEDULER', 'VIEW_ONLY')", name="ck_org_mgr_perm"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    org_node_id: Mapped[int] = mapped_column(Integer, ForeignKey("org_node.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("sys_user.id", ondelete="CASCADE"), nullable=False)
+    title_name: Mapped[str] = mapped_column(String(60), nullable=False)  # 如：系主任、专业负责人、排课干事
+    permission_level: Mapped[str] = mapped_column(String(24), default="SCHEDULER", nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+

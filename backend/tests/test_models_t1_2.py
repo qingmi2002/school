@@ -41,7 +41,7 @@ def db_session():
 
 
 def test_core_tables_registered():
-    assert len(Base.metadata.tables) == 21
+    assert len(Base.metadata.tables) == 22
 
 
 def test_multi_campus_boundary_resolution_and_lateral_grant(db_session):

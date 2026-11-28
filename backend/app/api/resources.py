@@ -196,6 +196,9 @@ class CohortCreate(BaseModel):
     cohort_name: str
     org_node_id: int
     grade_year: int = 2026
+    study_years: int = 4
+    graduation_year: Optional[int] = None
+    cohort_status: str = "ACTIVE"
     student_count: int = 40
 
 
@@ -204,11 +207,30 @@ class CohortOut(CohortCreate):
 
 
 @router.get("/cohorts", response_model=List[CohortOut])
-def list_cohorts(org_node_id: Optional[int] = Query(None), db: Session = Depends(get_db)):
+def list_cohorts(
+    org_node_id: Optional[int] = Query(None),
+    cohort_status: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
     q = db.query(StudentCohort)
     if org_node_id is not None:
         q = q.filter(StudentCohort.org_node_id == org_node_id)
-    return [CohortOut(id=c.id, cohort_code=c.cohort_code, cohort_name=c.cohort_name, org_node_id=c.org_node_id, grade_year=c.grade_year, student_count=c.student_count) for c in q.order_by(StudentCohort.id).all()]
+    if cohort_status:
+        q = q.filter(StudentCohort.cohort_status == cohort_status)
+    return [
+        CohortOut(
+            id=c.id,
+            cohort_code=c.cohort_code,
+            cohort_name=c.cohort_name,
+            org_node_id=c.org_node_id,
+            grade_year=c.grade_year,
+            study_years=int(getattr(c, 'study_years', 4) or 4),
+            graduation_year=getattr(c, 'graduation_year', None) or (c.grade_year + int(getattr(c, 'study_years', 4) or 4)),
+            cohort_status=getattr(c, 'cohort_status', 'ACTIVE') or 'ACTIVE',
+            student_count=c.student_count,
+        )
+        for c in q.order_by(StudentCohort.grade_year.desc(), StudentCohort.id).all()
+    ]
 
 
 @router.post("/cohorts", response_model=CohortOut)
@@ -218,11 +240,14 @@ def create_cohort(
     current_user: Optional[SysUser] = Depends(get_optional_current_user),
 ):
     assert_org_subtree_access(db, current_user, payload.org_node_id)
-    c = StudentCohort(**payload.model_dump())
+    data = payload.model_dump()
+    if not data.get('graduation_year'):
+        data['graduation_year'] = data['grade_year'] + int(data.get('study_years') or 4)
+    c = StudentCohort(**data)
     db.add(c)
     db.commit()
     db.refresh(c)
-    return CohortOut(id=c.id, cohort_code=c.cohort_code, cohort_name=c.cohort_name, org_node_id=c.org_node_id, grade_year=c.grade_year, student_count=c.student_count)
+    return CohortOut(id=c.id, cohort_code=c.cohort_code, cohort_name=c.cohort_name, org_node_id=c.org_node_id, grade_year=c.grade_year, study_years=c.study_years, graduation_year=c.graduation_year, cohort_status=c.cohort_status, student_count=c.student_count)
 
 
 @router.delete("/cohorts/{cohort_id}")
@@ -434,3 +459,69 @@ async def upload_master_import_excel(file: UploadFile = File(...), db: Session =
     if len(raw) < 4 or raw[:4] != b'PK\x03\x04':
         raise HTTPException(status_code=400, detail='文件格式损坏，非有效 .xlsx')
     return import_master_data_workbook(db, raw)
+
+
+@router.patch("/cohorts/{cohort_id}/status")
+def update_cohort_status_api(
+    cohort_id: int,
+    cohort_status: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user: Optional[SysUser] = Depends(get_optional_current_user),
+):
+    c = db.query(StudentCohort).filter(StudentCohort.id == cohort_id).first()
+    if c is None:
+        raise HTTPException(status_code=404, detail="班级不存在")
+    assert_org_subtree_access(db, current_user, c.org_node_id)
+    if cohort_status not in ("ACTIVE", "GRADUATED"):
+        raise HTTPException(status_code=400, detail="状态仅支持 ACTIVE 或 GRADUATED")
+    c.cohort_status = cohort_status
+    db.commit()
+    return {"id": c.id, "cohort_status": c.cohort_status}
+
+
+@router.get("/export/{domain}")
+def export_domain_excel_api(domain: str, db: Session = Depends(get_db)):
+    """V2.0 各业务模块专属 Excel 导出（teachers / students / cohorts / classrooms）。"""
+    from io import BytesIO
+    from urllib.parse import quote
+    from fastapi.responses import Response
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    org_map = {n.id: n.node_name for n in db.query(OrgNode).all()}
+    cohort_map = {c.id: c.cohort_name for c in db.query(StudentCohort).all()}
+
+    if domain == "teachers":
+        ws.title = "教师名单"
+        ws.append(["工号", "姓名", "所属组织", "权限级别", "排课优先级"])
+        for u in db.query(SysUser).filter(SysUser.role_code.in_(["TEACHER", "TEACHING_LEAD"]), SysUser.is_active.is_(True)).all():
+            ws.append([u.username, u.real_name, org_map.get(u.org_node_id, ""), u.role_code, int(getattr(u, "teacher_priority", 1) or 1)])
+    elif domain == "students":
+        ws.title = "学生名单"
+        ws.append(["学号", "姓名", "所属组织", "所属班级"])
+        for u in db.query(SysUser).filter(SysUser.role_code == "STUDENT", SysUser.is_active.is_(True)).all():
+            ws.append([u.username, u.real_name, org_map.get(u.org_node_id, ""), cohort_map.get(u.cohort_id, "") if u.cohort_id else ""])
+    elif domain == "cohorts":
+        ws.title = "班级列表"
+        ws.append(["班级编码", "班级名称", "所属组织", "入学年份", "学制", "毕业年份", "状态", "人数"])
+        for c in db.query(StudentCohort).order_by(StudentCohort.grade_year.desc()).all():
+            sy = int(getattr(c, "study_years", 4) or 4)
+            gy = getattr(c, "graduation_year", None) or (c.grade_year + sy)
+            ws.append([c.cohort_code, c.cohort_name, org_map.get(c.org_node_id, ""), c.grade_year, sy, gy, getattr(c, "cohort_status", "ACTIVE"), c.student_count])
+    elif domain == "classrooms":
+        ws.title = "教室与机房"
+        ws.append(["编号", "教学楼", "归属组织", "类型", "座位数", "使用模式", "绑定固定班", "共享策略"])
+        for r in db.query(Classroom).filter(Classroom.is_active.is_(True)).all():
+            ws.append([r.room_code, r.building, org_map.get(r.owner_org_id, ""), r.room_type, r.capacity, r.usage_mode, cohort_map.get(r.fixed_cohort_id, "") if r.fixed_cohort_id else "", r.sharing_policy])
+    else:
+        raise HTTPException(status_code=400, detail="不支持的导出模块")
+
+    buf = BytesIO()
+    wb.save(buf)
+    fname = quote(f"{domain}_export.xlsx")
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fname}"},
+    )
