@@ -28,6 +28,7 @@ export interface UserProfile {
   cohort_id?: number | null;
   cohort_name?: string | null;
   permissions: string[];
+  managed_nodes?: Array<{ org_node_id: number; org_node_name: string; title_name: string; permission_level: string }>;
 }
 
 export interface LoginResponse {
@@ -577,5 +578,37 @@ export async function cloneSemesterTasks(sourceSemesterId: number, targetSemeste
     "/curriculum/tasks/clone-semester",
     { source_semester_id: sourceSemesterId, target_semester_id: targetSemesterId }
   );
+  return data;
+}
+
+export interface OrgNodeManagerItem {
+  id: number;
+  org_node_id: number;
+  user_id: number;
+  username: string;
+  real_name: string;
+  title_name: string;
+  permission_level: string;
+}
+
+export async function fetchOrgNodeManagers(nodeId: number): Promise<OrgNodeManagerItem[]> {
+  const { data } = await apiClient.get<OrgNodeManagerItem[]>(`/org/nodes/${nodeId}/managers`);
+  return data;
+}
+
+export async function bindOrgNodeManager(
+  nodeId: number,
+  payload: { user_id: number; title_name: string; permission_level: string }
+): Promise<OrgNodeManagerItem> {
+  const { data } = await apiClient.post<OrgNodeManagerItem>(`/org/nodes/${nodeId}/managers`, payload);
+  return data;
+}
+
+export async function unbindOrgNodeManager(managerId: number) {
+  await apiClient.delete(`/org/managers/${managerId}`);
+}
+
+export async function fetchMyPersonalOverview(): Promise<any> {
+  const { data } = await apiClient.get("/auth/my-overview");
   return data;
 }

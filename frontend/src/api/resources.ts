@@ -40,6 +40,9 @@ export interface CohortItem {
   cohort_name: string;
   org_node_id: number;
   grade_year: number;
+  study_years?: number;
+  graduation_year?: number;
+  cohort_status?: string;
   student_count: number;
 }
 
@@ -131,4 +134,11 @@ export const uploadMasterImport = async (file: File): Promise<MasterImportReport
   fd.append("file", file);
   const { data } = await apiClient.post<MasterImportReport>("/resources/master-import/upload", fd);
   return data;
+};
+
+export const updateCohortStatus = async (cohortId: number, cohort_status: "ACTIVE" | "GRADUATED") =>
+  apiClient.patch(`/resources/cohorts/${cohortId}/status`, null, { params: { cohort_status } });
+
+export const downloadDomainExcel = (domain: "teachers" | "students" | "cohorts" | "classrooms") => {
+  window.open(`/api/v1/resources/export/${domain}`, "_blank");
 };

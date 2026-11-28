@@ -10,7 +10,51 @@
             <el-button v-if="canEdit && selectedNode && selectedNode.parent_id" type="danger" plain size="small" @click="handleDelete">删除节点</el-button>
           </div>
         </div>
-      </template>
+      
+  <el-card v-if="selectedNode" shadow="never" style="margin-top: 12px">
+    <template #header>
+      <div style="display: flex; justify-content: space-between; align-items: center">
+        <strong>本级组织职能管理人员（{{ selectedNode.node_name }}）</strong>
+        <el-button v-if="canEdit" size="small" type="primary" @click="mgrDialog = true">+ 配置节点管理人员</el-button>
+      </div>
+    </template>
+    <el-table :data="orgNodeManagers" size="small" border stripe>
+      <el-table-column prop="real_name" label="姓名" width="120" />
+      <el-table-column prop="username" label="工号" width="120" />
+      <el-table-column prop="title_name" label="自定义职能名称" min-width="160" />
+      <el-table-column prop="permission_level" label="权限档位" width="130" />
+      <el-table-column v-if="canEdit" label="操作" width="80">
+        <template #default="{ row }">
+          <el-button link type="danger" size="small" @click="handleUnbindMgr(row.id)">解绑</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+  </el-card>
+
+  <el-dialog v-model="mgrDialog" title="为当前组织节点配置职能管理人员" width="440px">
+    <el-form :model="mgrForm" label-width="96px" size="small">
+      <el-form-item label="选择人员">
+        <el-select v-model="mgrForm.user_id" style="width: 100%" placeholder="选择教师或管理员">
+          <el-option v-for="u in allUsers" :key="u.id" :label="`${u.real_name} (${u.username})`" :value="u.id" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="自定义职能名称">
+        <el-input v-model="mgrForm.title_name" placeholder="如：计算机系排课干事、软件专业负责人" />
+      </el-form-item>
+      <el-form-item label="权限档位">
+        <el-select v-model="mgrForm.permission_level" style="width: 100%">
+          <el-option label="节点全权管理 (FULL_ADMIN)" value="FULL_ADMIN" />
+          <el-option label="排课与任务管理 (SCHEDULER)" value="SCHEDULER" />
+          <el-option label="仅查看与审核 (VIEW_ONLY)" value="VIEW_ONLY" />
+        </el-select>
+      </el-form-item>
+    </el-form>
+    <template #footer>
+      <el-button size="small" @click="mgrDialog = false">取消</el-button>
+      <el-button size="small" type="primary" @click="handleBindMgr">保存配置</el-button>
+    </template>
+  </el-dialog>
+</template>
 
       <div v-if="selectedNode" class="flags-list">
         <div class="flag-row">
@@ -91,6 +135,8 @@
 </template>
 
 <script setup lang="ts">
+import { watch as _watch } from "vue";
+import { apiClient as _apiClient, bindOrgNodeManager, fetchOrgNodeManagers, unbindOrgNodeManager, type OrgNodeManagerItem } from "../api/client";
 import { onMounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
 import { fetchScopedUsers, updateOrgNodeFlags, type OrgNodeTreeItem, type UserProfile } from "../api/client";
@@ -166,6 +212,41 @@ onMounted(async () => {
     users.value = [];
   }
 });
+
+const orgNodeManagers = ref<OrgNodeManagerItem[]>([]);
+const allUsers = ref<Array<{ id: number; username: string; real_name: string }>>([]);
+const mgrDialog = ref(false);
+const mgrForm = reactive({ user_id: undefined as number | undefined, title_name: "", permission_level: "SCHEDULER" });
+
+async function loadNodeManagers(nodeId?: number) {
+  if (!nodeId) return;
+  orgNodeManagers.value = await fetchOrgNodeManagers(nodeId);
+  if (!allUsers.value.length) {
+    const { data } = await _apiClient.get("/auth/users");
+    allUsers.value = data || [];
+  }
+}
+
+async function handleBindMgr() {
+  if (!props.selectedNode || !mgrForm.user_id || !mgrForm.title_name) return;
+  await bindOrgNodeManager(props.selectedNode.id, {
+    user_id: mgrForm.user_id,
+    title_name: mgrForm.title_name,
+    permission_level: mgrForm.permission_level,
+  });
+  ElMessage.success("节点职能管理员已绑定");
+  mgrDialog.value = false;
+  mgrForm.title_name = "";
+  await loadNodeManagers(props.selectedNode.id);
+}
+
+async function handleUnbindMgr(id: number) {
+  await unbindOrgNodeManager(id);
+  ElMessage.success("已解绑");
+  await loadNodeManagers(props.selectedNode?.id);
+}
+
+_watch(() => props.selectedNode?.id, (id) => { loadNodeManagers(id); }, { immediate: true });
 </script>
 
 <style scoped>
